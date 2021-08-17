@@ -12,7 +12,8 @@ file. The goal is to have something similar to
 ## Using _orbits_
 To use orbit, clone the repository and install it with `python -m pip install
 .` (from the project's directory). To install development dependencies (required
-to run the examples), use `".[dev]"` instead of `.`.
+to run the examples), use `".[dev]"` instead of `.`. The project will
+(hopefully) be on PyPI soon, once the RV-only modelling is stable.
 
 There is no detailed documentation yet, but examples will be added to the
 `examples` directory.
@@ -21,6 +22,12 @@ There is no detailed documentation yet, but examples will be added to the
 * [ ] Implement RVModel that supports mutliple planets in a single system from
   one instrument.
 * [ ] Add GP activity modelling for RV
+* [ ] Add RV plots
+  * [ ] Full timeseries (with "decomposed" signals)
+  * [ ] Phase-folded
+* [ ] Add sampling plots
+  * [ ] Trace plots
+  * [ ] Corner plot
 * [ ] Support multiple instruments.
 * [ ] Implement an `OrbitModel` that wraps all the building blocks from
   `exoplanet` (all types of timeseries).
