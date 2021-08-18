@@ -4,10 +4,15 @@ import aesara_theano_fallback.tensor as tt
 import exoplanet as xo
 import numpy as np
 import pymc3 as pm
+from celerite2.theano import GaussianProcess, terms
 from pymc3 import Model
 
 import orbits.utils as ut
 from orbits.prior import load_params
+
+KERNELS = {"SHOTerm": terms.SHOTerm}
+
+KERNEL_PARAMS = {"SHOTerm": ["sigma", "rho", "Q"]}
 
 
 class RVModel(Model):
@@ -21,6 +26,8 @@ class RVModel(Model):
         name: str = "",
         model: Optional[Model] = None,
         t_ref: Optional[float] = None,
+        gp_kernel: Optional[str] = None,
+        quiet_celerite: bool = False,
     ):
         super().__init__(name=name, model=model)
 
@@ -37,14 +44,21 @@ class RVModel(Model):
         self.num_planets = num_planets
 
         # Load all parameters supplied
+        # TODO: Maybe should specify extra level for ['planets'] in input to loop only this.
         load_params(params["system"])
+        if gp_kernel is not None:
+            with pm.Model(name="gp", model=self) as gpmodel:
+                load_params(params["gp"])
+            self.gpmodel = gpmodel
+            self._get_gp_dict(gp_kernel)
         self.submodels = dict()
         for prefix in params:
-            if prefix == "system":
+            if prefix in ["system", "gp"]:
                 # We system is used in the parent model
                 continue
 
-            # For each submodel (usually planets) we load parameters
+            # For each planet, we load parameters.
+            # Using submodel makes "{letter}_" prefix auto
             with pm.Model(name=prefix, model=self) as submodel:
                 load_params(params[prefix])
 
@@ -65,12 +79,15 @@ class RVModel(Model):
         self.get_rv_model(self.t)
 
         # Then, with the rv_model values, we define a likelihood with the RV data
-        try:
-            self.err = tt.sqrt(self.svrad ** 2 + self.wn ** 2)
-        except AttributeError:
-            self.err = self.svrad
+        self.err = tt.sqrt(self.svrad ** 2 + self.wn ** 2)
 
-        pm.Normal("obs", mu=self.rv_model, sd=self.err, observed=self.vrad)
+        if gp_kernel is None:
+            pm.Normal("obs", mu=self.rv_model, sd=self.err, observed=self.vrad)
+        else:
+            self.kernel = KERNELS[gp_kernel](**self.gpdict)
+            self.gp = GaussianProcess(self.kernel, t=self.t, yerr=self.err, quiet=quiet_celerite)
+            self.resid = self.vrad - self.rv_model
+            self.gp.marginal("obs", observed=self.resid)
 
     def _get_orbit_dict(self):
 
@@ -169,23 +186,59 @@ class RVModel(Model):
         for prefix in self.submodels:
             K_PARAMS = [f"{prefix}_k", f"{prefix}_logk"]
             if f"{prefix}_k" in nvars:
-                rvdict["k"] = nvars[f"{prefix}_k"]
+                rvdict["k"].append(nvars[f"{prefix}_k"])
             elif f"{prefix}_logk" in nvars:
-                rvdict["k"] = tt.exp(nvars[f"{prefix}_logk"])
+                rvdict["k"].append(tt.exp(nvars[f"{prefix}_logk"]))
             else:
                 raise KeyError(f"Should have one of: {K_PARAMS}")
         rvdict["k"] = pm.Deterministic("k", tt.as_tensor_variable(rvdict["k"]))
 
-        # No alternative parametrization for this one,  also not required
-        if "trend" in nvars:
-            rvdict["trend"] = nvars["trend"]
+        if "gamma" in nvars:
+            rvdict["gamma"] = nvars["gamma"]
+        else:
+            rvdict["gamma"] = pm.Deterministic(
+                "gamma", tt.as_tensor_variable(0.0)
+            )
+
+        if "dvdt" in nvars:
+            rvdict["dvdt"] = nvars["dvdt"]
+        else:
+            rvdict["dvdt"] = pm.Deterministic(
+                "dvdt", tt.as_tensor_variable(0.0)
+            )
+
+        if "curv" in nvars:
+            rvdict["curv"] = nvars["curv"]
+        else:
+            rvdict["curv"] = pm.Deterministic(
+                "curv", tt.as_tensor_variable(0.0)
+            )
 
         if "wn" in nvars:
             rvdict["wn"] = nvars["wn"]
         elif "logwn" in nvars:
             rvdict["wn"] = pm.Deterministic("wn", tt.exp(nvars["logwn"]))
+        else:
+            rvdict["wn"] = pm.Deterministic("wn", tt.as_tensor_variable(0.0))
 
         self.rvdict = rvdict
+
+    def _get_gp_dict(self, kernel_name: str):
+        gpdict = dict()
+
+        nvars = self.gpmodel.named_vars
+        for pname in KERNEL_PARAMS[kernel_name]:
+            if f"gp_{pname}" in nvars:
+                gpdict[f"{pname}"] = nvars[f"gp_{pname}"]
+            elif f"gp_log{pname}" in nvars:
+                gpdict[f"{pname}"] = pm.Deterministic(
+                    f"gp_{pname}", tt.exp(nvars[f"gp_log{pname}"])
+                )
+            else:
+                raise ValueError(
+                    f"Kernel {kernel_name} requires parameter {pname} or log{pname}"
+                )
+        self.gpdict = gpdict
 
     def get_rv_model(self, t, name=""):
         rvorb = self.orbit.get_radial_velocity(t, K=self.k)
@@ -193,12 +246,15 @@ class RVModel(Model):
 
         # Define the background RV model
         # NOTE: If trend is not defined we just don't add bkg term
-        try:
-            # HACK: Not sure this is the best way to get the "trend" shape
-            A = np.vander(t - self.t_ref, self.trend.shape.get_test_value()[0])
-            bkg = pm.Deterministic("bkg" + name, tt.dot(A, self.trend))
-        except AttributeError:
-            bkg = pm.Deterministic("bkg", tt.as_tensor_variable(0.0))
+        # HACK: Not sure this is the best way to get the "trend" shape
+        # A = np.vander(t - self.t_ref, self.trend.shape.get_test_value()[0])
+        t_shift = t - self.t_ref
+        bkg = self.gamma
+        bkg += self.dvdt * t_shift
+        bkg += self.curv * t_shift ** 2
+        bkg = pm.Deterministic("bkg" + name, bkg)
 
         # Sum over planets and add the background to get the full model
-        return pm.Deterministic("rv_model" + name, tt.sum(rvorb, axis=-1) + bkg)
+        return pm.Deterministic(
+            "rv_model" + name, tt.sum(rvorb, axis=-1) + bkg
+        )
