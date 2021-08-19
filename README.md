@@ -19,15 +19,16 @@ There is no detailed documentation yet, but examples will be added to the
 `examples` directory.
 
 ## Plans
-* [ ] Implement RVModel that supports mutliple planets in a single system from
+* [X] Implement RVModel that supports mutliple planets in a single system from
   one instrument.
-* [ ] Add GP activity modelling for RV
+* [X] Add GP activity modelling for RV
 * [ ] Add RV plots
   * [ ] Full timeseries (with "decomposed" signals)
   * [ ] Phase-folded
 * [ ] Add sampling plots
   * [ ] Trace plots
   * [ ] Corner plot
+* [ ] Add support for configuration file
 * [ ] Support multiple instruments.
 * [ ] Implement an `OrbitModel` that wraps all the building blocks from
   `exoplanet` (all types of timeseries).
