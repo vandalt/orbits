@@ -8,10 +8,9 @@
 # Imports
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-
-from orbits.model import RVModel
 import orbits.utils as ut
+import pandas as pd
+from orbits.model import RVModel
 
 # %%
 url = "https://raw.githubusercontent.com/California-Planet-Search/radvel/master/example_data/epic203771098.csv"
@@ -104,13 +103,17 @@ params = {
             "dist": "DataNormal",
             "kwargs": {"data_used": np.log(yerr), "sd": 5.0},
         },
-        "trend": {
+        "gamma": {
             "dist": "Normal",
-            "kwargs": {
-                "mu": 0.0,
-                "sd": 10.0 ** -np.arange(3)[::-1],
-                "shape": 3,
-            },
+            "kwargs": {"mu": 0.0, "sd": 0.01},
+        },
+        "dvdt": {
+            "dist": "Normal",
+            "kwargs": {"mu": 0.0, "sd": 0.1},
+        },
+        "curv": {
+            "dist": "Normal",
+            "kwargs": {"mu": 0.0, "sd": 1.0},
         },
     },
 }
@@ -148,8 +151,8 @@ plt.show()
 
 # %%
 with model:
-    map_soln = pmx.optimize(start=model.test_point, vars=[model.trend])
-    opt2_list = [model.trend, model.logwn]
+    map_soln = pmx.optimize(start=model.test_point, vars=[model.gamma, model.dvdt, model.curv])
+    opt2_list = [model.gamma, model.dvdt, model.curv, model.logwn]
     for prefix in model.submodels:
         opt2_list.extend(
             [
@@ -195,9 +198,7 @@ with model:
 # Import arviz for data visualization
 import arviz as az
 
-az.summary(
-    trace, var_names=["trend", "logwn", "w", "e", "tp", "k", "per"]
-)
+az.summary(trace, var_names=["gamma", "dvdt", "curv", "logwn", "w", "e", "tp", "k", "per"])
 
 # %%
 # We still use corner for corner plots

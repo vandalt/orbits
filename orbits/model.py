@@ -15,7 +15,126 @@ KERNELS = {"SHOTerm": terms.SHOTerm}
 KERNEL_PARAMS = {"SHOTerm": ["sigma", "rho", "Q"]}
 
 
+class PlanetModel(Model):
+    """Model that stores info about one planet"""
+
+    # TODO: Add supported input parameters info
+    def __init__(
+        self,
+        params: dict[str, dict],
+        name: str = "",
+        model: Optional[Model] = None,
+    ):
+        """
+        PyMC3 model that represents a single planet. This model is mainly a
+        container for planetary parameters of a single planet.
+
+        :param params: Planet orbit parameters. These parameters are used to
+                       define the orbit of the planet. Under the hood, the
+                       model ensures that [per, tp, e, w, k] are available.
+        :type params: dict[str, dict]
+        :param name: PyMC3 model name that will prefix all variables,
+                     defaults to ""
+        :type name: str, optional
+        :param model: Parent PyMC3 model, defaults to None
+        :type model: Optional[Model], optional
+        """
+        super().__init__(name=name, model=model)
+
+        # Load planet parameters and convert to synth params under the hood
+        # (required for orbit modelling)
+        load_params(params)
+        self._get_synth_params()
+
+    def _get_synth_params(self):
+        """
+        Get parameters in "synth" basis from radvel (per, tp, e, w, k).
+        These parameters will be used for orbit calculations.
+        """
+
+        nvars = self.named_vars
+        prefix = f"{self.name}_" if self.name != "" else ""
+
+        # Period-related parameters
+        # exoplanet's KeplerianOrbit requires period or semi-major axis
+        PER_PARAMS = [f"{prefix}per", f"{prefix}logper"]
+        if f"{prefix}per" in nvars:
+            pass
+        elif f"{prefix}logper" in nvars:
+            # NOTE: No prefix when declaring bc model name takes care of it
+            # but required to access with nvars
+            pm.Deterministic("per", tt.exp(nvars[f"{prefix}logper"]))
+        else:
+            raise KeyError(f"Should have one of: {PER_PARAMS}")
+
+        # Ecc/omega parameters come in pair
+        EW_PARAMS = [
+            (f"{prefix}e", f"{prefix}w"),
+            (f"{prefix}secosw", f"{prefix}sesinw"),
+            (f"{prefix}ecosw", f"{prefix}esinw"),
+            f"{prefix}secsw",
+        ]
+        if f"{prefix}e" in nvars and f"{prefix}w" in nvars:
+            pass
+        elif "secosw" in nvars and "sesinw" in nvars:
+            pm.Deterministic(
+                "e",
+                nvars[f"{prefix}secosw"] ** 2 + nvars[f"{prefix}sesinw"] ** 2,
+            )
+            pm.Deterministic(
+                "w",
+                tt.arctan2(nvars[f"{prefix}sesinw"], nvars[f"{prefix}secosw"]),
+            )
+        elif "ecosw" in nvars and "esinw" in nvars:
+            pm.Deterministic(
+                "e",
+                tt.sqrt(
+                    nvars[f"{prefix}ecosw"] ** 2 + nvars[f"{prefix}esinw"] ** 2
+                ),
+            )
+            pm.Deterministic(
+                "w",
+                tt.arctan2(nvars[f"{prefix}sesinw"], nvars[f"{prefix}secosw"]),
+            )
+        elif "secsw":
+            secsw = nvars[f"{prefix}secsw"]
+            pm.Deterministic("e", tt.sum(secsw ** 2))
+            pm.Deterministic("w", tt.arctan2(secsw[1], secsw[0]))
+        else:
+            raise KeyError(f"Should have one of: {EW_PARAMS}")
+
+        # TODO: Add support for tau (epoch periastron)
+        TIME_PARAMS = [f"{prefix}tc", f"{prefix}tp"]
+        if f"{prefix}tp" in nvars:
+            pass
+        elif f"{prefix}tc" in nvars:
+            per = self.per
+            ecc = self.e
+            omega = self.w
+            pm.Deterministic(
+                "tp",
+                ut.timetrans_to_timeperi(
+                    nvars[f"{prefix}tc"], per, ecc, omega
+                ),
+            )
+        else:
+            raise KeyError(f"Should have one of: {TIME_PARAMS}")
+
+        # TODO: Support Msini here ?
+        # NOTE: This could also be in "main" orbit dict because of **kwargs
+        # Probably not ideal though
+        K_PARAMS = [f"{prefix}k", f"{prefix}logk"]
+        if f"{prefix}k" in nvars:
+            pass
+        elif f"{prefix}logk" in nvars:
+            pm.Deterministic("k", tt.exp(nvars[f"{prefix}logk"]))
+        else:
+            raise KeyError(f"Should have one of: {K_PARAMS}")
+
+
 class RVModel(Model):
+    """Model for a given RV Dataset"""
+
     def __init__(
         self,
         t: np.ndarray,
@@ -23,18 +142,18 @@ class RVModel(Model):
         svrad: np.ndarray,
         params: dict[str, dict],
         num_planets: int,
-        name: str = "",
-        model: Optional[Model] = None,
         t_ref: Optional[float] = None,
         gp_kernel: Optional[str] = None,
         quiet_celerite: bool = False,
+        name: str = "",
+        model: Optional[Model] = None,
     ):
         super().__init__(name=name, model=model)
 
         # Set the data attributes
-        self.t = t.copy()
-        self.vrad = vrad.copy()
-        self.svrad = svrad.copy()
+        self.t = np.array(t)
+        self.vrad = np.array(vrad)
+        self.svrad = np.array(svrad)
 
         if t_ref is None:
             self.t_ref = 0.5 * (self.t.min() + self.t.max())
@@ -44,184 +163,78 @@ class RVModel(Model):
         self.num_planets = num_planets
 
         # Load all parameters supplied
-        # TODO: Maybe should specify extra level for ['planets'] in input to loop only this.
         load_params(params["system"])
         if gp_kernel is not None:
             with pm.Model(name="gp", model=self) as gpmodel:
                 load_params(params["gp"])
             self.gpmodel = gpmodel
             self._get_gp_dict(gp_kernel)
-        self.submodels = dict()
+        else:
+            self.gpmodel = None
+
+        # TODO: Probably safer to explicitely iterate planets somehow
+        # (not just skip "non-planets")
+        self.planets = dict()
         for prefix in params:
+
             if prefix in ["system", "gp"]:
                 # We system is used in the parent model
                 continue
 
             # For each planet, we load parameters.
             # Using submodel makes "{letter}_" prefix auto
-            with pm.Model(name=prefix, model=self) as submodel:
-                load_params(params[prefix])
-
-            self.submodels[prefix] = submodel
+            self.planets[prefix] = PlanetModel(
+                params[prefix], name=prefix, model=self
+            )
 
         self._get_orbit_dict()
-        self._get_rv_dict()
+        self._get_rv_params()
 
-        # NOTE: This will move to a more generic model when other tiemseries are included
-        # NOTE: Using kwds directly. To use **, would need to "translate" radvel names
+        # NOTE: This will move to a more generic model when other tiemseries
+        # are included
+        # NOTE: Using kwds directly. To use **, would need to "translate"
+        # radvel names
         # to exoplanet or just use exoplanet names by default.
         self.orbit = xo.orbits.KeplerianOrbit(
             period=self.per, t_periastron=self.tp, ecc=self.e, omega=self.w
         )
 
-        # Once we have our parameters, we can define the RV model at data points
+        # Once we have our parameters, we define the RV model at data points
         # NOTE: Wihtout name, this is just self.rv_model (Determinstic)
         self.get_rv_model(self.t)
 
-        # Then, with the rv_model values, we define a likelihood with the RV data
+        # Then, with the rv_model, we define a likelihood with the RV data
         self.err = tt.sqrt(self.svrad ** 2 + self.wn ** 2)
 
         if gp_kernel is None:
             pm.Normal("obs", mu=self.rv_model, sd=self.err, observed=self.vrad)
         else:
             self.kernel = KERNELS[gp_kernel](**self.gpdict)
-            self.gp = GaussianProcess(self.kernel, t=self.t, yerr=self.err, quiet=quiet_celerite)
+            self.gp = GaussianProcess(
+                self.kernel, t=self.t, yerr=self.err, quiet=quiet_celerite
+            )
             self.resid = self.vrad - self.rv_model
             self.gp.marginal("obs", observed=self.resid)
 
-    def _get_orbit_dict(self):
-
-        odict = dict(
-            per=[],
-            tp=[],
-            e=[],
-            w=[],
-        )
-
+    def _get_rv_params(self):
         nvars = self.named_vars
 
-        for prefix in self.submodels:
+        if "gamma" not in nvars:
+            pm.Deterministic("gamma", tt.as_tensor_variable(0.0))
 
-            # Period-related parameters
-            # exoplanet's KeplerianOrbit requires either period or semi-major axis
-            PER_PARAMS = [f"{prefix}_per", f"{prefix}_logper"]
-            if f"{prefix}_per" in nvars:
-                odict["per"].append(nvars[f"{prefix}_per"])
-            elif f"{prefix}_logper" in nvars:
-                odict["per"].append(tt.exp(nvars[f"{prefix}_logper"]))
-            else:
-                raise KeyError(f"Should have one of: {PER_PARAMS}")
+        if "dvdt" not in nvars:
+            pm.Deterministic("dvdt", tt.as_tensor_variable(0.0))
 
-            # Ecc/omega parameters come in pair
-            EW_PARAMS = [
-                (f"{prefix}_e", f"{prefix}_w"),
-                (f"{prefix}_secosw", f"{prefix}_sesinw"),
-                (f"{prefix}_ecosw", f"{prefix}_esinw"),
-                f"{prefix}_secsw",
-            ]
-            if f"{prefix}_e" in nvars and f"{prefix}_w" in nvars:
-                odict["e"].append(nvars[f"{prefix}_e"])
-                odict["w"].append(nvars[f"{prefix}_w"])
-            elif "secosw" in nvars and "sesinw" in nvars:
-                odict["e"].append(
-                    nvars[f"{prefix}_secosw"] ** 2
-                    + nvars[f"{prefix}_sesinw"] ** 2
-                )
-                odict["w"].append(
-                    tt.arctan2(
-                        nvars[f"{prefix}_sesinw"], nvars[f"{prefix}_secosw"]
-                    )
-                )
-            elif "ecosw" in nvars and "esinw" in nvars:
-                odict["e"].append(
-                    tt.sqrt(
-                        nvars[f"{prefix}_ecosw"] ** 2
-                        + nvars[f"{prefix}_esinw"] ** 2
-                    )
-                )
-                odict["w"].append(
-                    tt.arctan2(
-                        nvars[f"{prefix}_sesinw"], nvars[f"{prefix}_secosw"]
-                    )
-                )
-            elif "secsw":
-                secsw = nvars[f"{prefix}_secsw"]
-                odict["e"].append(tt.sum(secsw ** 2))
-                odict["w"].append(tt.arctan2(secsw[1], secsw[0]))
-            else:
-                raise KeyError(f"Should have one of: {EW_PARAMS}")
-
-            # TODO: Add support for tau (epoch periastron)
-            TIME_PARAMS = [f"{prefix}_tc", f"{prefix}_tp"]
-            if f"{prefix}_tp" in nvars:
-                odict["tp"].append(nvars[f"{prefix}_tp"])
-            elif f"{prefix}_tc" in nvars:
-                # odict["tc"].append(nvars["tc"])
-                per = odict["per"][-1]
-                ecc = odict["e"][-1]
-                omega = odict["w"][-1]
-                odict["tp"].append(
-                    ut.timetrans_to_timeperi(
-                        nvars[f"{prefix}_tc"], per, ecc, omega
-                    )
-                )
-            else:
-                raise KeyError(f"Should have one of: {TIME_PARAMS}")
-
-        for pname in odict:
-            odict[pname] = pm.Deterministic(
-                pname, tt.as_tensor_variable(odict[pname])
-            )
-
-        self.odict = odict
-
-    def _get_rv_dict(self):
-        rvdict = dict()
-        nvars = self.named_vars
-
-        # TODO: Support Msini here ?
-        # NOTE: This could also be in "main" orbit dict because of **kwargs
-        # Probably not ideal though
-        rvdict["k"] = []
-        for prefix in self.submodels:
-            K_PARAMS = [f"{prefix}_k", f"{prefix}_logk"]
-            if f"{prefix}_k" in nvars:
-                rvdict["k"].append(nvars[f"{prefix}_k"])
-            elif f"{prefix}_logk" in nvars:
-                rvdict["k"].append(tt.exp(nvars[f"{prefix}_logk"]))
-            else:
-                raise KeyError(f"Should have one of: {K_PARAMS}")
-        rvdict["k"] = pm.Deterministic("k", tt.as_tensor_variable(rvdict["k"]))
-
-        if "gamma" in nvars:
-            rvdict["gamma"] = nvars["gamma"]
-        else:
-            rvdict["gamma"] = pm.Deterministic(
-                "gamma", tt.as_tensor_variable(0.0)
-            )
-
-        if "dvdt" in nvars:
-            rvdict["dvdt"] = nvars["dvdt"]
-        else:
-            rvdict["dvdt"] = pm.Deterministic(
-                "dvdt", tt.as_tensor_variable(0.0)
-            )
-
-        if "curv" in nvars:
-            rvdict["curv"] = nvars["curv"]
-        else:
-            rvdict["curv"] = pm.Deterministic(
-                "curv", tt.as_tensor_variable(0.0)
-            )
+        if "curv" not in nvars:
+            pm.Deterministic("curv", tt.as_tensor_variable(0.0))
 
         if "wn" in nvars:
-            rvdict["wn"] = nvars["wn"]
+            pass
         elif "logwn" in nvars:
-            rvdict["wn"] = pm.Deterministic("wn", tt.exp(nvars["logwn"]))
+            pm.Deterministic("wn", tt.exp(nvars["logwn"]))
         else:
-            rvdict["wn"] = pm.Deterministic("wn", tt.as_tensor_variable(0.0))
+            pm.Deterministic("wn", tt.as_tensor_variable(0.0))
 
-        self.rvdict = rvdict
 
     def _get_gp_dict(self, kernel_name: str):
         gpdict = dict()
@@ -236,7 +249,8 @@ class RVModel(Model):
                 )
             else:
                 raise ValueError(
-                    f"Kernel {kernel_name} requires parameter {pname} or log{pname}"
+                    f"Kernel {kernel_name} requires parameter "
+                    f"{pname} or log{pname}"
                 )
         self.gpdict = gpdict
 
