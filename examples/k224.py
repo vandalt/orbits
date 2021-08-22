@@ -103,31 +103,30 @@ params = {
             "dist": "DataNormal",
             "kwargs": {"data_used": np.log(yerr), "sd": 5.0},
         },
-        "gamma": {
+        # "gamma": {
+        #     "dist": "Normal",
+        #     "kwargs": {"mu": 0.0, "sd": 0.01},
+        # },
+        # "dvdt": {
+        #     "dist": "Normal",
+        #     "kwargs": {"mu": 0.0, "sd": 0.1},
+        # },
+        # "curv": {
+        #     "dist": "Normal",
+        #     "kwargs": {"mu": 0.0, "sd": 1.0},
+        # },
+        "trend": {
             "dist": "Normal",
-            "kwargs": {"mu": 0.0, "sd": 0.01},
-        },
-        "dvdt": {
-            "dist": "Normal",
-            "kwargs": {"mu": 0.0, "sd": 0.1},
-        },
-        "curv": {
-            "dist": "Normal",
-            "kwargs": {"mu": 0.0, "sd": 1.0},
-        },
+            "kwargs": {"mu": 0.0, "sd": 10.0 ** -np.arange(3)[::-1], "shape": 3}
+        }
     },
 }
 
 # %%
 with RVModel(x, y, yerr, params, 2) as model:
 
-    # TODO: Not sure how will handle these yet
-    # Eccentricity & argument of periasteron
-    # ecs = pmx.UnitDisk("ecs", shape=(2, 2), testval=0.01 * np.ones((2, 2)))
-    # ecc = pm.Deterministic("ecc", tt.sum(ecs ** 2, axis=0))
-    # omega = pm.Deterministic("omega", tt.arctan2(ecs[1], ecs[0]))
     xo.eccentricity.vaneylen19(
-        "ecc_prior", multi=True, shape=2, fixed=True, observed=model.e
+        "ecc_prior", multi=True, shape=2, fixed=True, observed=model.synth_dict["e"]
     )
 
     rv_model_pred = model.get_rv_model(t, name="_pred")
@@ -151,9 +150,11 @@ plt.show()
 
 # %%
 with model:
-    map_soln = pmx.optimize(start=model.test_point, vars=[model.gamma, model.dvdt, model.curv])
-    opt2_list = [model.gamma, model.dvdt, model.curv, model.logwn]
-    for prefix in model.submodels:
+    # map_soln = pmx.optimize(start=model.test_point, vars=[model.gamma, model.dvdt, model.curv])
+    # opt2_list = [model.gamma, model.dvdt, model.curv, model.logwn]
+    map_soln = pmx.optimize(start=model.test_point, vars=[model.trend])
+    opt2_list = [model.trend, model.logwn]
+    for prefix in model.planets:
         opt2_list.extend(
             [
                 model[f"{prefix}_logk"],
@@ -164,7 +165,7 @@ with model:
     map_soln = pmx.optimize(start=map_soln, vars=opt2_list)
     map_soln = pmx.optimize(
         start=map_soln,
-        vars=[model[f"{prefix}_secsw"] for prefix in model.submodels],
+        vars=[model[f"{prefix}_secsw"] for prefix in model.planets],
     )
     map_soln = pmx.optimize(start=map_soln)
 
@@ -198,7 +199,8 @@ with model:
 # Import arviz for data visualization
 import arviz as az
 
-az.summary(trace, var_names=["gamma", "dvdt", "curv", "logwn", "w", "e", "tp", "k", "per"])
+# az.summary(trace, var_names=["gamma", "dvdt", "curv", "logwn", "w", "e", "b_tc", "c_tc", "k", "per"])
+az.summary(trace, var_names=["trend", "logwn", "w", "e", "b_tc", "c_tc", "k", "per"])
 
 # %%
 # We still use corner for corner plots

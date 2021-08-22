@@ -14,6 +14,8 @@ KERNELS = {"SHOTerm": terms.SHOTerm}
 
 KERNEL_PARAMS = {"SHOTerm": ["sigma", "rho", "Q"]}
 
+SYNT_PARAMS = ["per", "tp", "e", "w", "k"]
+
 
 class PlanetModel(Model):
     """Model that stores info about one planet"""
@@ -187,7 +189,7 @@ class RVModel(Model):
                 params[prefix], name=prefix, model=self
             )
 
-        self._get_orbit_dict()
+        self._get_synth_params()
         self._get_rv_params()
 
         # NOTE: This will move to a more generic model when other tiemseries
@@ -196,7 +198,10 @@ class RVModel(Model):
         # radvel names
         # to exoplanet or just use exoplanet names by default.
         self.orbit = xo.orbits.KeplerianOrbit(
-            period=self.per, t_periastron=self.tp, ecc=self.e, omega=self.w
+            period=self.synth_dict["per"],
+            t_periastron=self.synth_dict["tp"],
+            ecc=self.synth_dict["e"],
+            omega=self.synth_dict["w"],
         )
 
         # Once we have our parameters, we define the RV model at data points
@@ -215,6 +220,19 @@ class RVModel(Model):
             )
             self.resid = self.vrad - self.rv_model
             self.gp.marginal("obs", observed=self.resid)
+
+    def _get_synth_params(self):
+        synth_dict = dict()
+        nvars = self.named_vars
+        for pname in SYNT_PARAMS:
+            synth_dict[pname] = pm.Deterministic(
+                pname,
+                tt.as_tensor_variable(
+                    [nvars[f"{prefix}_{pname}"] for prefix in self.planets]
+                ),
+            )
+
+        self.synth_dict = synth_dict
 
     def _get_rv_params(self):
         nvars = self.named_vars
@@ -235,7 +253,6 @@ class RVModel(Model):
         else:
             pm.Deterministic("wn", tt.as_tensor_variable(0.0))
 
-
     def _get_gp_dict(self, kernel_name: str):
         gpdict = dict()
 
@@ -255,18 +272,19 @@ class RVModel(Model):
         self.gpdict = gpdict
 
     def get_rv_model(self, t, name=""):
-        rvorb = self.orbit.get_radial_velocity(t, K=self.k)
+        rvorb = self.orbit.get_radial_velocity(t, K=self.synth_dict["k"])
         pm.Deterministic("rv_orbits" + name, rvorb)
 
         # Define the background RV model
         # NOTE: If trend is not defined we just don't add bkg term
         # HACK: Not sure this is the best way to get the "trend" shape
-        # A = np.vander(t - self.t_ref, self.trend.shape.get_test_value()[0])
         t_shift = t - self.t_ref
-        bkg = self.gamma
-        bkg += self.dvdt * t_shift
-        bkg += self.curv * t_shift ** 2
-        bkg = pm.Deterministic("bkg" + name, bkg)
+        A = np.vander(t_shift, self.trend.shape.get_test_value()[0])
+        bkg = pm.Deterministic("bkg" + name, tt.dot(A, self.trend))
+        # bkg = self.gamma
+        # bkg += self.dvdt * t_shift
+        # bkg += self.curv * t_shift ** 2
+        # bkg = pm.Deterministic("bkg" + name, bkg)
 
         # Sum over planets and add the background to get the full model
         return pm.Deterministic(
