@@ -16,9 +16,6 @@ SYNT_PARAMS = ["per", "tp", "e", "w", "k"]
 
 
 class PlanetModel(Model):
-    """Model that stores info about one planet"""
-
-    # TODO: Add supported input parameters info
     def __init__(
         self,
         params: dict[str, dict],
@@ -27,7 +24,10 @@ class PlanetModel(Model):
     ):
         """
         PyMC3 model that represents a single planet. This model is mainly a
-        container for planetary parameters of a single planet.
+        container for planetary parameters of a single planet and it does not
+        contain any orbit calculation. The nomenclature of planet parameters
+        is mostly consistent with RadVel. This is generally used in an orbit
+        modle (e.g. RVModel), but can be created directly by users.
 
         :param params: Planet orbit parameters. These parameters are used to
                        define the orbit of the planet. Under the hood, the
@@ -103,7 +103,6 @@ class PlanetModel(Model):
         else:
             raise KeyError(f"Should have one of: {EW_PARAMS}")
 
-        # TODO: Add support for tau (epoch periastron)
         TIME_PARAMS = [f"{prefix}tc", f"{prefix}tp"]
         if f"{prefix}tp" in nvars:
             pass
@@ -120,9 +119,6 @@ class PlanetModel(Model):
         else:
             raise KeyError(f"Should have one of: {TIME_PARAMS}")
 
-        # TODO: Support Msini here ?
-        # NOTE: This could also be in "main" orbit dict because of **kwargs
-        # Probably not ideal though
         K_PARAMS = [f"{prefix}k", f"{prefix}logk"]
         if f"{prefix}k" in nvars:
             pass
@@ -140,15 +136,36 @@ class GPModel(Model):
         name: str = "",
         model: Model = None,
     ):
+        """
+        PyMC3 model that stores parameters of a Gaussian Process.
+        This can be used with the supported kernels from celerite2 or PyMC3.
+
+        :param params: Dictionary with GP parameter info
+        :type params: dict[str, dict]
+        :param kernel_name: Name of the kernel used. Usually this is the name
+                            of the class in celerite2 or PyMC3.
+        :type kernel_name: str
+        :param name: PyMC3 model name that will prefix all variables,
+                     defaults to ""
+        :type name: str, optional
+        :param model: Parent PyMC3 model, defaults to None
+        :type model: Optional[Model], optional
+        """
         super().__init__(name=name, model=model)
 
         self.kernel_name = kernel_name
         load_params(params)
         self._get_gp_dict()
 
+        # KERNELS is just a dict mapping name to object constructors
         self.kernel = KERNELS[self.kernel_name](**self.gpdict)
 
     def _get_gp_dict(self):
+        """
+        Make sure that the model has all required GP parameters.
+        This handles "log{param}" cases and also makes sure that all required
+        parameters for a given kernel are there.
+        """
 
         gpdict = dict()
         nvars = self.gpmodel.named_vars
@@ -165,11 +182,10 @@ class GPModel(Model):
                     f"Kernel {self.kernel_name} requires parameter "
                     f"{pname} or log{pname}"
                 )
+        self.gpdict = gpdict
 
 
 class RVModel(Model):
-    """Model for a given RV Dataset"""
-
     def __init__(
         self,
         t: np.ndarray,
@@ -183,6 +199,35 @@ class RVModel(Model):
         name: str = "",
         model: Optional[Model] = None,
     ):
+        """
+        PyMC3 model for an RV dataset using `exoplanet` to calculate orbits.
+
+        :param t: Time values
+        :type t: np.ndarray
+        :param vrad: Radial velocity values
+        :type vrad: np.ndarray
+        :param svrad: Radial velocity uncertainties
+        :type svrad: np.ndarray
+        :param params: Dictionary with parameter information.
+                       System-wide parameters should be in the "system" key.
+                       GP parameters should be under the "gp" key.
+                       All other keys are treated as planets (this may change
+                       to avoid ambiguities in the future)
+        :type params: dict[str, dict]
+        :param num_planets: Number of planets to model in the dataset.
+        :type num_planets: int
+        :param t_ref: Reference time for RV trend parameters, defaults to None
+        :type t_ref: Optional[float], optional
+        :param gp_kernel: [TODO:description], defaults to None
+        :type gp_kernel: Optional[str], optional
+        :param quiet_celerite: [TODO:description], defaults to False
+        :type quiet_celerite: bool, optional
+        :param name: PyMC3 model name that will prefix all variables,
+                     defaults to ""
+        :type name: str, optional
+        :param model: Parent PyMC3 model, defaults to None
+        :type model: Optional[Model], optional
+        """
         super().__init__(name=name, model=model)
 
         # Set the data attributes
@@ -190,39 +235,50 @@ class RVModel(Model):
         self.vrad = np.array(vrad)
         self.svrad = np.array(svrad)
 
+        # Set RV trend reference time
         if t_ref is None:
             self.t_ref = 0.5 * (self.t.min() + self.t.max())
         else:
             self.t_ref = t_ref
 
-        self.num_planets = num_planets
+        try:
+            self.num_planets = int(num_planets)
+        except (ValueError, TypeError):
+            raise TypeError("num_planets should be an integer.")
 
-        # Load parameters common to all planets
+        # Load parameters that affect the whole system.
         load_params(params["system"])
 
-        # TODO: Probably safer to explicitely iterate planets somehow
-        # (not just skip "non-planets")
         self.planets = dict()
         for prefix in params:
 
+            # NOTE: In the future it might be better to replace this by
+            # iterating over planets explicitely. Two special cases is
+            # easy to manage for now.
             if prefix in ["system", "gp"]:
-                # We system is used in the parent model
+                # We skip non-planet entries in the parameter dictionary
                 continue
 
-            # For each planet, we load parameters.
+            # For each planet, we load parameters
             # Using submodel makes "{letter}_" prefix auto
             self.planets[prefix] = PlanetModel(
                 params[prefix], name=prefix, model=self
             )
 
+        # exoplanet orbit objects require a certain parmeterization.
+        # We built vectors over planets in this "synth" parameterization
+        # (used to synthesize RVs, following RadVel nomenclature).
         self._get_synth_params()
+
+        # We also make sure that parameters specific to the RV model are
+        # available (e.g. reparamtrezie log{param})
         self._get_rv_params()
 
-        # NOTE: This will move to a more generic model when other tiemseries
-        # are included
-        # NOTE: Using kwds directly. To use **, would need to "translate"
-        # radvel names
-        # to exoplanet or just use exoplanet names by default.
+        # NOTE: will move to more generic model to support other timeseries.
+        # We access keys explicitely because the naming convention is different
+        # between RadVel and exoplanet
+        # To use **, would need to "translate" radvel names to exoplanet or
+        # just use exoplanet names by default.
         self.orbit = xo.orbits.KeplerianOrbit(
             period=self.synth_dict["per"],
             t_periastron=self.synth_dict["tp"],
@@ -231,42 +287,44 @@ class RVModel(Model):
         )
 
         # Once we have our parameters, we define the RV model at data points
-        # NOTE: Wihtout name, this is just self.rv_model (Determinstic)
         self.get_rv_model(self.t)
+        self.resid = self.vrad - self.rv_model
 
         # Then, with the rv_model, we define a likelihood with the RV data
         self.err = tt.sqrt(self.svrad ** 2 + self.wn ** 2)
 
+        # Define data likelihood depending on GP type
         if gp_kernel is None:
             pm.Normal("obs", mu=self.rv_model, sd=self.err, observed=self.vrad)
-        elif gp_kernel in CELERITE_KERNELS:
-            self.gpmodel = GPModel(
-                params["gp"], gp_kernel, name="gp", model=self
-            )
-            self.gp = GaussianProcess(
-                self.gpmodel.kernel,
-                t=self.t,
-                yerr=self.err,
-                quiet=quiet_celerite,
-            )
-            self.resid = self.vrad - self.rv_model
-            self.gp.marginal("obs", observed=self.resid)
-        elif gp_kernel in PYMC3_KERNELS:
-            self.gpmodel = GPModel(
-                params["gp"], gp_kernel, name="gp", model=self
-            )
-            self.gp = pm.gp.Marginal(cov_func=self.gpmodel.kernel)
-            self.resid = self.vrad - self.rv_model
-            self.gp.marginal_likelihood(
-                "obs", self.t[:, None], self.resid, noise=self.err
-            )
         else:
-            raise ValueError(
-                f"gp_kernel must be None, or one of {KERNEL_LIST}"
+            self.gpmodel = GPModel(
+                params["gp"], gp_kernel, name="gp", model=self
             )
+            if gp_kernel in CELERITE_KERNELS:
+                self.gp = GaussianProcess(
+                    self.gpmodel.kernel,
+                    t=self.t,
+                    yerr=self.err,
+                    quiet=quiet_celerite,
+                )
+                self.gp.marginal("obs", observed=self.resid)
+            elif gp_kernel in PYMC3_KERNELS:
+                self.gp = pm.gp.Marginal(cov_func=self.gpmodel.kernel)
+                self.gp.marginal_likelihood(
+                    "obs", self.t[:, None], self.resid, noise=self.err
+                )
+            else:
+                raise ValueError(
+                    f"gp_kernel must be None, or one of {KERNEL_LIST}"
+                )
 
     def _get_synth_params(self):
-        # NOTE: This logic will be good for all types of mutli-planet models
+        """
+        Create vectors of parameters in "synth" basis to feed exoplanet orbit
+        model.
+        Stored as synth_dict attribute.
+        """
+        # NOTE: This will be good for all types of orbit models, not only RVs
         synth_dict = dict()
         nvars = self.named_vars
         for pname in SYNT_PARAMS:
@@ -280,6 +338,10 @@ class RVModel(Model):
         self.synth_dict = synth_dict
 
     def _get_rv_params(self):
+        """
+        Read RV-specific and create determinstic relations to include them in
+        RV calculation
+        """
         nvars = self.named_vars
 
         if "gamma" not in nvars:
@@ -298,22 +360,32 @@ class RVModel(Model):
         else:
             pm.Deterministic("wn", tt.as_tensor_variable(0.0))
 
-    def get_rv_model(self, t, name=""):
-        rvorb = self.orbit.get_radial_velocity(t, K=self.synth_dict["k"])
-        pm.Deterministic("rv_orbits" + name, rvorb)
+    def get_rv_model(self, t: np.ndarray, name: str = "") -> pm.Distribution:
+        """
+        Get the RV signal for the system.
 
-        # Define the background RV model
-        # NOTE: If trend is not defined we just don't add bkg term
-        # HACK: Not sure this is the best way to get the "trend" shape
+        :param t: Time values where the signal is calculated
+        :type t: np.ndarray
+        :param name: Name of the RV prediction (name of the variable will be
+                     rv_model{_name}
+        :type name: str, optional
+        :return: PyMC3 determinsitic variable representing the RV signal
+        :rtype: pm.Distribution
+        """
+
+        # Calculate RV signal for each planet's orbit (2D array)
+        rvorb = self.orbit.get_radial_velocity(t, K=self.synth_dict["k"])
+        suffix = "" if name == "" else f"_{name}"
+        pm.Deterministic("rv_orbits" + suffix, rvorb)
+
+        # Define the background RV model (constant at 0 if not provided)
         t_shift = t - self.t_ref
-        A = np.vander(t_shift, self.trend.shape.get_test_value()[0])
-        bkg = pm.Deterministic("bkg" + name, tt.dot(A, self.trend))
-        # bkg = self.gamma
-        # bkg += self.dvdt * t_shift
-        # bkg += self.curv * t_shift ** 2
-        # bkg = pm.Deterministic("bkg" + name, bkg)
+        bkg = self.gamma
+        bkg += self.dvdt * t_shift
+        bkg += self.curv * t_shift ** 2
+        bkg = pm.Deterministic("bkg" + suffix, bkg)
 
         # Sum over planets and add the background to get the full model
         return pm.Deterministic(
-            "rv_model" + name, tt.sum(rvorb, axis=-1) + bkg
+            "rv_model" + suffix, tt.sum(rvorb, axis=-1) + bkg
         )
