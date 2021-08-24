@@ -4,15 +4,13 @@ import aesara_theano_fallback.tensor as tt
 import exoplanet as xo
 import numpy as np
 import pymc3 as pm
-from celerite2.theano import GaussianProcess, terms
+from celerite2.theano import GaussianProcess
 from pymc3 import Model
 
 import orbits.utils as ut
+from orbits.kernel import (CELERITE_KERNELS, KERNEL_LIST, KERNEL_PARAMS,
+                           KERNELS, PYMC3_KERNELS)
 from orbits.prior import load_params
-
-KERNELS = {"SHOTerm": terms.SHOTerm}
-
-KERNEL_PARAMS = {"SHOTerm": ["sigma", "rho", "Q"]}
 
 SYNT_PARAMS = ["per", "tp", "e", "w", "k"]
 
@@ -134,6 +132,41 @@ class PlanetModel(Model):
             raise KeyError(f"Should have one of: {K_PARAMS}")
 
 
+class GPModel(Model):
+    def __init__(
+        self,
+        params: dict[str, dict],
+        kernel_name: str,
+        name: str = "",
+        model: Model = None,
+    ):
+        super().__init__(name=name, model=model)
+
+        self.kernel_name = kernel_name
+        load_params(params)
+        self._get_gp_dict()
+
+        self.kernel = KERNELS[self.kernel_name](**self.gpdict)
+
+    def _get_gp_dict(self):
+
+        gpdict = dict()
+        nvars = self.gpmodel.named_vars
+        prefix = f"{self.name}_" if self.name != "" else ""
+        for pname in KERNEL_PARAMS[self.kernel_name]:
+            if f"{prefix}{pname}" in nvars:
+                gpdict[pname] = nvars[f"{prefix}{pname}"]
+            elif f"{prefix}log{pname}" in nvars:
+                gpdict[pname] = self.pm.Deterministic(
+                    pname, tt.exp(nvars[f"{prefix}log{pname}"])
+                )
+            else:
+                raise ValueError(
+                    f"Kernel {self.kernel_name} requires parameter "
+                    f"{pname} or log{pname}"
+                )
+
+
 class RVModel(Model):
     """Model for a given RV Dataset"""
 
@@ -164,15 +197,8 @@ class RVModel(Model):
 
         self.num_planets = num_planets
 
-        # Load all parameters supplied
+        # Load parameters common to all planets
         load_params(params["system"])
-        if gp_kernel is not None:
-            with pm.Model(name="gp", model=self) as gpmodel:
-                load_params(params["gp"])
-            self.gpmodel = gpmodel
-            self._get_gp_dict(gp_kernel)
-        else:
-            self.gpmodel = None
 
         # TODO: Probably safer to explicitely iterate planets somehow
         # (not just skip "non-planets")
@@ -213,15 +239,34 @@ class RVModel(Model):
 
         if gp_kernel is None:
             pm.Normal("obs", mu=self.rv_model, sd=self.err, observed=self.vrad)
-        else:
-            self.kernel = KERNELS[gp_kernel](**self.gpdict)
+        elif gp_kernel in CELERITE_KERNELS:
+            self.gpmodel = GPModel(
+                params["gp"], gp_kernel, name="gp", model=self
+            )
             self.gp = GaussianProcess(
-                self.kernel, t=self.t, yerr=self.err, quiet=quiet_celerite
+                self.gpmodel.kernel,
+                t=self.t,
+                yerr=self.err,
+                quiet=quiet_celerite,
             )
             self.resid = self.vrad - self.rv_model
             self.gp.marginal("obs", observed=self.resid)
+        elif gp_kernel in PYMC3_KERNELS:
+            self.gpmodel = GPModel(
+                params["gp"], gp_kernel, name="gp", model=self
+            )
+            self.gp = pm.gp.Marginal(cov_func=self.gpmodel.kernel)
+            self.resid = self.vrad - self.rv_model
+            self.gp.marginal_likelihood(
+                "obs", self.t[:, None], self.resid, noise=self.err
+            )
+        else:
+            raise ValueError(
+                f"gp_kernel must be None, or one of {KERNEL_LIST}"
+            )
 
     def _get_synth_params(self):
+        # NOTE: This logic will be good for all types of mutli-planet models
         synth_dict = dict()
         nvars = self.named_vars
         for pname in SYNT_PARAMS:
@@ -252,24 +297,6 @@ class RVModel(Model):
             pm.Deterministic("wn", tt.exp(nvars["logwn"]))
         else:
             pm.Deterministic("wn", tt.as_tensor_variable(0.0))
-
-    def _get_gp_dict(self, kernel_name: str):
-        gpdict = dict()
-
-        nvars = self.gpmodel.named_vars
-        for pname in KERNEL_PARAMS[kernel_name]:
-            if f"gp_{pname}" in nvars:
-                gpdict[f"{pname}"] = nvars[f"gp_{pname}"]
-            elif f"gp_log{pname}" in nvars:
-                gpdict[f"{pname}"] = pm.Deterministic(
-                    f"gp_{pname}", tt.exp(nvars[f"gp_log{pname}"])
-                )
-            else:
-                raise ValueError(
-                    f"Kernel {kernel_name} requires parameter "
-                    f"{pname} or log{pname}"
-                )
-        self.gpdict = gpdict
 
     def get_rv_model(self, t, name=""):
         rvorb = self.orbit.get_radial_velocity(t, K=self.synth_dict["k"])
