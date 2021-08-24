@@ -13,7 +13,11 @@ def get_qp_kernel(period, ls_exp, ls_per) -> Covariance:
     return sqexp_kernel * per_kernel
 
 
-CELERITE_KERNELS = {"SHOTerm": terms.SHOTerm}
+CELERITE_KERNELS = {
+    "SHOTerm": terms.SHOTerm,
+    "Matern32Term": terms.Matern32Term,
+    "RotationTerm": terms.RotationTerm,
+}
 PYMC3_KERNELS = {
     "ExpQuad": pm.gp.cov.ExpQuad,
     "Matern32": pm.gp.cov.Matern32,
@@ -22,8 +26,11 @@ PYMC3_KERNELS = {
     "QuasiPeriodic": get_qp_kernel,
 }
 KERNELS = {**CELERITE_KERNELS, **PYMC3_KERNELS}
+KERNEL_LIST = list(KERNELS.keys())
 KERNEL_PARAMS = {
     "SHOTerm": ["sigma", "rho", "Q"],
+    "Matern32Term": ["sigma", "rho"],
+    "RotationTerm": ["sigma", "period", "Q0", "dQ", "f"],
     "ExpQuad": ["sigma", "ls"],
     "Matern32": ["sigma", "ls"],
     "Matern52": ["sigma", "ls"],
