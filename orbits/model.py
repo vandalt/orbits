@@ -12,7 +12,7 @@ from orbits.kernel import (CELERITE_KERNELS, KERNEL_LIST, KERNEL_PARAMS,
                            KERNELS, PYMC3_KERNELS)
 from orbits.prior import load_params
 
-SYNT_PARAMS = ["per", "tp", "e", "w", "k"]
+SYNTH_PARAMS = ["per", "tp", "e", "w", "k"]
 
 
 class PlanetModel(Model):
@@ -327,7 +327,7 @@ class RVModel(Model):
         # NOTE: This will be good for all types of orbit models, not only RVs
         synth_dict = dict()
         nvars = self.named_vars
-        for pname in SYNT_PARAMS:
+        for pname in SYNTH_PARAMS:
             synth_dict[pname] = pm.Deterministic(
                 pname,
                 tt.as_tensor_variable(
