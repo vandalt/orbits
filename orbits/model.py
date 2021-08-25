@@ -253,6 +253,9 @@ class RVModel(Model):
         self.vrad = np.array(vrad)
         self.svrad = np.array(svrad)
 
+        pm.Data("vrad", self.vrad)
+        pm.Data("svrad", self.svrad)
+
         # Set RV trend reference time
         if t_ref is None:
             self.t_ref = 0.5 * (self.t.min() + self.t.max())

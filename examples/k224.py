@@ -137,7 +137,7 @@ params = {
     "system": {
         "logwn": {
             "dist": "DataNormal",
-            "kwargs": {"data_used": np.log(svrad), "sd": 5.0},
+            "kwargs": {"data_used": "svrad", "sd": 5.0, "apply": "log"},
         },
         "gamma": {
             "dist": "Normal",

@@ -21,12 +21,19 @@ def fixed_pymc3_param(name: str, value: float) -> Distribution:
     return pm.Deterministic(name, tt.as_tensor_variable(value))
 
 
+DATA_NORMAL_FUNCTIONS = {
+    "log": np.log,
+    "exp": np.exp,
+}
+
+
 def data_normal_prior(
     name: str,
-    data_used=None,
+    data_used: str,
     sd: Optional[float] = None,
     nsigma: Optional[float] = None,
     central_measure: str = "mean",
+    apply: Optional[str] = None,
 ) -> Distribution:
     """
     Helper function to create a "DataNormal" distribution. This distribution
@@ -36,7 +43,8 @@ def data_normal_prior(
 
     :param name: Parameter name
     :type name: str
-    :param data_used: Dataset used to define the distribution, defaults to None
+    :param data_used: Name of the data used to define the prior
+                      (pymc3 data object)
     :type data_used: np.ndarray, optional
     :param sd: Standard deviation of the distribution, defaults to None
     :type sd: Optional[float], optional
@@ -46,14 +54,31 @@ def data_normal_prior(
     :param central_measure: Central measured use from the dataset, defaults to
                             "mean"
     :type central_measure: str, optional
+    :param apply: Name of the function applied to values before using them,
+                  defaults to None
+    :type apply: Optional[str], optional
     :return: PyMC3 normal distribution
     :rtype: Distribution
     """
 
-    # values = pm.Model.get_context()[data_used].get_value()
-    if data_used is None:
-        raise TypeError("data_used must be provided.")
-    values = data_used
+    try:
+        # Get values from PyMC3 Data
+        values = pm.Model.get_context()[data_used].get_value()
+    except KeyError:
+        # If not pymc3 data, try attribute array
+        values = getattr(pm.Model.get_context(), data_used)
+    except AttributeError:
+        raise ValueError(
+            "data_used must point to a PyMC3 dataset or array in the model."
+        )
+
+    if apply is not None:
+        if apply in DATA_NORMAL_FUNCTIONS:
+            values = DATA_NORMAL_FUNCTIONS[apply](values)
+        else:
+            raise ValueError(
+                f"apply must be None or one of {list(DATA_NORMAL_FUNCTIONS)}"
+            )
 
     if sd is not None and nsigma is not None:
         raise TypeError("Only one of sd and nsigma must be provided")

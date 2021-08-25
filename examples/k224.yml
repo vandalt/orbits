@@ -29,8 +29,8 @@ c:
 # Some parameters affect the whole system, not just one planet.
 system:
   logwn:
-    dist: Normal
-    kwargs: {mu: 0.548930, sd: 5.0}
+    dist: DataNormal
+    kwargs: {data_used: svrad, sd: 5.0, apply: log}
   gamma:
     dist: Normal
     kwargs: {mu: 0.0, sd: 1.0}
