@@ -1,59 +1,89 @@
-# TODO: Add links to packages here
-
 # %% [markdown]
 # # Radial velocity fitting
-# This example replicates the case study from exoplanet, which follows a tutorial from RadVel.
+# In this example, we will show how to fit radial velocity data using the _orbits_ Python API.
+#
+# This example replicates [the case study](https://gallery.exoplanet.codes/tutorials/rv/)
+# from _[exoplanet](https://docs.exoplanet.codes/en/latest/)_ (which this package is built upon).
+# The _exoplanet_ case study follows [a tutorial](https://radvel.readthedocs.io/en/latest/tutorials/K2-24_Fitting+MCMC.html)
+# from [RadVel](https://radvel.readthedocs.io/en/latest/index.html).
+# A lot of the nomenclature and some design ideas in _orbits_ are borrowed from RadVel.
 
-# %%
-# Imports
 import matplotlib.pyplot as plt
+# %%
 import numpy as np
 import orbits.utils as ut
 import pandas as pd
 from orbits.model import RVModel
 
+# %% [markdown]
+# First, we can download the data from RadVel and plot it. We also make a finer
+# grid that will be used to plot the model.
+
 # %%
+# Download and unpack the data
 url = "https://raw.githubusercontent.com/California-Planet-Search/radvel/master/example_data/epic203771098.csv"
 data = pd.read_csv(url, index_col=0)
+t = np.array(data.t)
+vrad = np.array(data.vel)
+svrad = np.array(data.errvel)
 
-x = np.array(data.t)
-y = np.array(data.vel)
-yerr = np.array(data.errvel)
+# Reference time for RV trends later
+x_ref = 0.5 * (t.min() + t.max())
 
-x_ref = 0.5 * (x.min() + x.max())
+# Fine grid for model plots
+t_pred = np.linspace(t.min() - 5, t.max() + 5, 1000)
 
-# Also make a fine grid that spans the observation window for plotting purposes
-t = np.linspace(x.min() - 5, x.max() + 5, 1000)
+# Plot the data
 plt.errorbar(data.t, data.vel, data.errvel, fmt="k.", capsize=2)
 plt.xlabel("Time [days]")
 plt.ylabel("RV [m/s]")
 plt.show()
+
+# %% [markdown]
+# Next, we use literature values for the periods and transit times.
+# Then we can use _exoplanet_ to estimate the RV semi-amplitude.
 
 # %%
 import exoplanet as xo
 
 periods = [20.8851, 42.3633]
 period_errs = [0.0003, 0.0006]
-t0s = [2072.7948, 2082.6251]
-t0_errs = [0.0007, 0.0004]
-Ks = xo.estimate_semi_amplitude(periods, x, y, yerr, t0s=t0s)
-print(Ks, "m/s")
+tc = [2072.7948, 2082.6251]
+tc_errs = [0.0007, 0.0004]
+k = xo.estimate_semi_amplitude(periods, t, vrad, svrad, t0s=tc)
+print("Semi-amplitude estimate:", k, "m/s")
 
-
-# %%
-# Import pymc3 things
-import pymc3_ext as pmx
 
 # %% [markdown]
-# Now, we define parameters as priors. The format is ugly here, but
-# we need to be inside the pymc3 model to define actual priors. So in order
-# to be compatible with config files, we get a dictionary like this.
+# _exoplanet_ (and _orbits_) uses the PyMC3 modelling framework. PyMC3 models
+# are a bit different than the Python models/functions we are used to. However,
+# it has several useful features, including Hamiltonian-Monte Carlo as well as
+# several pre-defined distributions that can be used as priors.
+# The _exoplanet_ documentation has [a nice introduction to PyMC3](https://docs.exoplanet.codes/en/latest/tutorials/intro-to-pymc3/).
+# The [PyMC3 documentation](https://docs.pymc.io/) is also a good resource to
+# learn more about PyMC3 and probabilistic programming. The main thing to note
+# is that parameters are defined directly as prior distributions.
 #
-# **NOTE: in the future, there might be a `Prior` class that is then able
-# to "translate" priors to pymc3. This should alleviate the parameter definition.**
+# To define models in PyMC3, we need to be in a model context (using something
+# like `with Model():`). However, if we do this, we need to setup relations
+# between fitted parameters and parameters of interest manually. The same
+# goes for a GP model, the RV signal, and everything that the model contains.
+# This is where _orbits_ comes in. With pre-defined model such as `RVModel`,
+# we can simply pass fitted parameters to the model and everything else
+# (reparametrizations, GP kernels, orbit solver) is set up automatically.
+#
+# Because _orbits_ was first designed only to be a CLI tool that uses a YAML
+# config file, parameters can currently only be passed at initialization
+# inside a dictionary. An example dictionary is given below.
+# **In the near future it should be possible to simply create the model
+# and then define parameters in the usual PyMC3 way.** But for now we use a
+# dictionary like the one below and we pass it to the RV model.
 
 # %%
+import pymc3_ext as pmx
+
 params = {
+    # This entry is the first planet with its orbital parameters.
     "b": {
         "logper": {
             "dist": "Normal",
@@ -66,16 +96,20 @@ params = {
         "logk": {
             "dist": "Normal",
             "kwargs": {
-                "mu": np.log(Ks[0]),
+                "mu": np.log(k[0]),
                 "sd": 2.0,
-                "testval": np.log(Ks[0]),
+                "testval": np.log(k[0]),
             },
         },
+        # This parameter is a list with the sqrt(e)*cos(w) and sqrt(e)*sin(w)
+        # exoplanet defines the UnitDisk prior which can bring performance
+        # improvement and forces the eccentricity to be < 1.
         "secsw": {
             "dist": "UnitDisk",
             "kwargs": {"shape": 2, "testval": 0.01 * np.ones(2)},
         },
     },
+    # This entry is the second planet with its orbital parameters.
     "c": {
         "logper": {
             "dist": "Normal",
@@ -88,9 +122,9 @@ params = {
         "logk": {
             "dist": "Normal",
             "kwargs": {
-                "mu": np.log(Ks[1]),
+                "mu": np.log(k[1]),
                 "sd": 2.0,
-                "testval": np.log(Ks[1]),
+                "testval": np.log(k[1]),
             },
         },
         "secsw": {
@@ -98,62 +132,83 @@ params = {
             "kwargs": {"shape": 2, "testval": 0.01 * np.ones(2)},
         },
     },
+    # Some parameters affect the whole system, not just one planet.
     "system": {
         "logwn": {
             "dist": "DataNormal",
-            "kwargs": {"data_used": np.log(yerr), "sd": 5.0},
+            "kwargs": {"data_used": np.log(svrad), "sd": 5.0},
         },
-        # "gamma": {
-        #     "dist": "Normal",
-        #     "kwargs": {"mu": 0.0, "sd": 0.01},
-        # },
-        # "dvdt": {
-        #     "dist": "Normal",
-        #     "kwargs": {"mu": 0.0, "sd": 0.1},
-        # },
-        # "curv": {
-        #     "dist": "Normal",
-        #     "kwargs": {"mu": 0.0, "sd": 1.0},
-        # },
-        "trend": {
+        "gamma": {
             "dist": "Normal",
-            "kwargs": {"mu": 0.0, "sd": 10.0 ** -np.arange(3)[::-1], "shape": 3}
-        }
+            "kwargs": {"mu": 0.0, "sd": 1.0},
+        },
+        "dvdt": {
+            "dist": "Normal",
+            "kwargs": {"mu": 0.0, "sd": 0.1},
+        },
+        "curv": {
+            "dist": "Normal",
+            "kwargs": {"mu": 0.0, "sd": 0.01},
+        },
     },
 }
 
+# %% [markdown]
+# Now that our parameters are defined, we can create a PyMC3 model.
+# Note that we can stil modify the model in the model context, as shown below
+# with an additional eccentricity prior and an RV predicitive curve.
+
 # %%
-with RVModel(x, y, yerr, params, 2) as model:
+with RVModel(t, vrad, svrad, params, 2) as model:
 
     xo.eccentricity.vaneylen19(
-        "ecc_prior", multi=True, shape=2, fixed=True, observed=model.synth_dict["e"]
+        "ecc_prior",
+        multi=True,
+        shape=2,
+        fixed=True,
+        observed=model.synth_dict["e"],
     )
 
-    rv_model_pred = model.get_rv_model(t, name="_pred")
+    rv_model_pred = model.get_rv_model(t_pred, name="pred")
 
     print(model.named_vars)
 
+# %% [markdown]
+# Now that we have a model, we can plot its prediction. But we only defined
+# priors, so how do we evaluate the model ? PyMC3 priors have a `testval` that
+# can be used to plot the model. The _pymc3-ext_ package, from the _exoplanet_
+# developers, has a built-in `eval_in_model` function to do just this.
+
 # %%
-plt.errorbar(x, y, yerr=yerr, fmt=".k")
+plt.errorbar(t, vrad, yerr=svrad, fmt=".k")
 
 with model:
-    plt.plot(t, pmx.eval_in_model(model.rv_orbits_pred), "--k", alpha=0.5)
-    plt.plot(t, pmx.eval_in_model(model.bkg_pred), ":k", alpha=0.5)
-    plt.plot(t, pmx.eval_in_model(model.rv_model_pred), label="model")
+    plt.plot(t_pred, pmx.eval_in_model(model.rv_orbits_pred), "--k", alpha=0.5)
+    plt.plot(t_pred, pmx.eval_in_model(model.bkg_pred), ":k", alpha=0.5)
+    plt.plot(t_pred, pmx.eval_in_model(model.rv_model_pred), label="model")
 
 plt.legend(fontsize=10)
-plt.xlim(t.min(), t.max())
+plt.xlim(t_pred.min(), t_pred.max())
 plt.xlabel("time [days]")
 plt.ylabel("radial velocity [m/s]")
 plt.title("initial model")
 plt.show()
 
+# %% [markdown]
+# Our initial test values don't look too good, so we will find the
+# maximum a posteriori (MAP) solution using `pymc3`/`pymc3-ext`.
+# Sometimes it can help to optimize parameters sequentially, as we do below.
+
 # %%
 with model:
-    # map_soln = pmx.optimize(start=model.test_point, vars=[model.gamma, model.dvdt, model.curv])
-    # opt2_list = [model.gamma, model.dvdt, model.curv, model.logwn]
-    map_soln = pmx.optimize(start=model.test_point, vars=[model.trend])
-    opt2_list = [model.trend, model.logwn]
+    # Optimize the offset and trend parameters only
+    map_soln = pmx.optimize(
+        start=model.test_point, vars=[model.gamma, model.dvdt, model.curv]
+    )
+    opt2_list = [model.gamma, model.dvdt, model.curv, model.logwn]
+
+    # Now optimize some planet parameters as well, using previous solution as
+    # starting point.
     for prefix in model.planets:
         opt2_list.extend(
             [
@@ -163,24 +218,38 @@ with model:
             ]
         )
     map_soln = pmx.optimize(start=map_soln, vars=opt2_list)
+
+    # Optimize eccentricity parameters
     map_soln = pmx.optimize(
         start=map_soln,
         vars=[model[f"{prefix}_secsw"] for prefix in model.planets],
     )
+
+    # Optimize everything
     map_soln = pmx.optimize(start=map_soln)
 
+
+# %% [markdown]
+# Let's now plot the MAP solution.
+
 # %%
-plt.errorbar(x, y, yerr=yerr, fmt=".k")
-plt.plot(t, map_soln["rv_orbits_pred"], "--k", alpha=0.5)
-plt.plot(t, map_soln["bkg_pred"], ":k", alpha=0.5)
-plt.plot(t, map_soln["rv_model_pred"], label="model")
+plt.errorbar(t, vrad, yerr=svrad, fmt=".k")
+plt.plot(t_pred, map_soln["rv_orbits_pred"], "--k", alpha=0.5)
+plt.plot(t_pred, map_soln["bkg_pred"], ":k", alpha=0.5)
+plt.plot(t_pred, map_soln["rv_model_pred"], label="model")
 
 plt.legend(fontsize=10)
-plt.xlim(t.min(), t.max())
+plt.xlim(t_pred.min(), t_pred.max())
 plt.xlabel("time [days]")
 plt.ylabel("radial velocity [m/s]")
 plt.title("MAP model")
 plt.show()
+
+# %% [markdown]
+# We can now sample our model posterior to get a better estimate of our
+# parameters and their uncertainty. We use _pymc3-ext_ as it wraps the PyMC3
+# sampler with more appropriate defaults and tuning strategies (this is taken
+# directly from the _exoplanet_ RV tutorial).
 
 # %%
 np.random.seed(42)
@@ -195,33 +264,57 @@ with model:
     )
 
 
+# %% [markdown]
+# We now have the posterior distribution and the HMC chains stored in `trace`.
+# We can use [ArviZ](https://arviz-devs.github.io/arviz/examples/index.html) to
+# visualize the dataset.
+
 # %%
-# Import arviz for data visualization
 import arviz as az
 
-# az.summary(trace, var_names=["gamma", "dvdt", "curv", "logwn", "w", "e", "b_tc", "c_tc", "k", "per"])
-az.summary(trace, var_names=["trend", "logwn", "w", "e", "b_tc", "c_tc", "k", "per"])
+az.summary(
+    trace,
+    var_names=[
+        "gamma",
+        "dvdt",
+        "curv",
+        "logwn",
+        "w",
+        "e",
+        "b_tc",
+        "c_tc",
+        "k",
+        "per",
+    ],
+)
+
+# %% [markdown]
+# The [_corner_](https://corner.readthedocs.io/en/latest/) is now compatible
+# with ArviZ objects, so we can use corner to view the corner plot of our
+# posterior distribution.
 
 # %%
-# We still use corner for corner plots
 import corner
 
 with model:
     corner.corner(trace, var_names=["per", "k", "e", "w"])
     plt.show()
 
+# %% [markdown]
+# Finally, we plot the full model and the phase-folded planet orbits
+
 # %%
-plt.errorbar(x, y, yerr=yerr, fmt=".k")
+plt.errorbar(t, vrad, yerr=svrad, fmt=".k")
 
 # Compute the posterior predictions for the RV model
 rv_pred = trace.posterior["rv_model_pred"].values
 pred = np.percentile(rv_pred, [16, 50, 84], axis=(0, 1))
-plt.plot(t, pred[1], color="C0", label="model")
-art = plt.fill_between(t, pred[0], pred[2], color="C0", alpha=0.3)
+plt.plot(t_pred, pred[1], color="C0", label="model")
+art = plt.fill_between(t_pred, pred[0], pred[2], color="C0", alpha=0.3)
 art.set_edgecolor("none")
 
 plt.legend(fontsize=10)
-plt.xlim(t.min(), t.max())
+plt.xlim(t_pred.min(), t_pred.max())
 plt.xlabel("time [days]")
 plt.ylabel("radial velocity [m/s]")
 plt.title("posterior constraints")
@@ -250,12 +343,12 @@ for n, letter in enumerate("bc"):
     other += np.median(trace.posterior["bkg"].values, axis=(0, 1))
 
     # Plot the folded data
-    x_fold = (x - t0 + 0.5 * p) % p - 0.5 * p
-    plt.errorbar(x_fold, y - other, yerr=yerr, fmt=".k")
+    x_fold = (t - t0 + 0.5 * p) % p - 0.5 * p
+    plt.errorbar(x_fold, vrad - other, yerr=svrad, fmt=".k")
 
     # Compute the posterior prediction for the folded RV model for this
     # planet
-    t_fold = (t - t0 + 0.5 * p) % p - 0.5 * p
+    t_fold = (t_pred - t0 + 0.5 * p) % p - 0.5 * p
     inds = np.argsort(t_fold)
     pred = np.percentile(
         trace.posterior["rv_orbits_pred"].values[:, :, inds, n],
