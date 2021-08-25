@@ -157,9 +157,9 @@ class GPModel(Model):
 
         if params is not None:
             load_params(params)
-            self._get_gp_dict()
+            self._gp_dict = self._get_gp_dict()
             # KERNELS is just a dict mapping name to object constructors
-            self.kernel = KERNELS[self.kernel_name](**self.gpdict)
+            self._kernel = KERNELS[self.kernel_name](**self.gpdict)
 
     @property
     def kernel(self):
