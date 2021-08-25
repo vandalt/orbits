@@ -34,7 +34,7 @@ def data_normal_prior(
 
     One of sd and nsigma must be used.
 
-    :param name: Paramter name
+    :param name: Parameter name
     :type name: str
     :param data_used: Dataset used to define the distribution, defaults to None
     :type data_used: np.ndarray, optional
