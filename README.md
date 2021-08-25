@@ -1,6 +1,6 @@
 # orbits
 
-**WARNING: This is still in early development. See the [Plans](##Plans) section for
+**WARNING: This is still in early development. See the [Initial release milestone](https://github.com/vandalt/orbits/milestone/1) section for
 details.**
 
 _orbits_ is a wrapper around [exoplanet](https://github.com/exoplanet-dev/exoplanet) aimed at providing pre-defined
@@ -17,22 +17,3 @@ to run the examples), use `".[dev]"` instead of `.`. The project will
 
 There is no detailed documentation yet, but examples will be added to the
 `examples` directory.
-
-## Plans
-* [X] Implement RVModel that supports mutliple planets in a single system from
-  one instrument.
-* [X] Add GP activity modelling for RV
-* [ ] Add RV plots
-  * [ ] Full timeseries (with "decomposed" signals)
-  * [ ] Phase-folded
-* [ ] Add sampling plots
-  * [ ] Trace plots
-  * [ ] Corner plot
-* [ ] Add support for configuration file
-* [ ] Support multiple instruments.
-* [ ] Implement an `OrbitModel` that wraps all the building blocks from
-  `exoplanet` (all types of timeseries).
-  * [ ] Transits (high priority)
-  * [ ] Astrometry
-  * [ ] TTVs
-* [ ] Impelement a parameter interface similar to RadVel's `Parameter` class
