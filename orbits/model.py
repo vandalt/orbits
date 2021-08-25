@@ -131,8 +131,8 @@ class PlanetModel(Model):
 class GPModel(Model):
     def __init__(
         self,
-        params: dict[str, dict],
         kernel_name: str,
+        params: dict[str, dict] = None,
         name: str = "",
         model: Model = None,
     ):
@@ -140,11 +140,11 @@ class GPModel(Model):
         PyMC3 model that stores parameters of a Gaussian Process.
         This can be used with the supported kernels from celerite2 or PyMC3.
 
-        :param params: Dictionary with GP parameter info
-        :type params: dict[str, dict]
         :param kernel_name: Name of the kernel used. Usually this is the name
                             of the class in celerite2 or PyMC3.
         :type kernel_name: str
+        :param params: Dictionary with GP parameter info, defaults to None
+        :type params: Optional[dict[str, dict]]
         :param name: PyMC3 model name that will prefix all variables,
                      defaults to ""
         :type name: str, optional
@@ -154,11 +154,28 @@ class GPModel(Model):
         super().__init__(name=name, model=model)
 
         self.kernel_name = kernel_name
-        load_params(params)
-        self._get_gp_dict()
 
-        # KERNELS is just a dict mapping name to object constructors
-        self.kernel = KERNELS[self.kernel_name](**self.gpdict)
+        if params is not None:
+            load_params(params)
+            self._get_gp_dict()
+            # KERNELS is just a dict mapping name to object constructors
+            self.kernel = KERNELS[self.kernel_name](**self.gpdict)
+
+    @property
+    def kernel(self):
+        # If the kernel is not defined yet, we define it and return to the user
+        if self._kernel is not None:
+            return self._kernel
+        else:
+            self._kernel = KERNELS[self.kernel_name](**self.gpdict)
+            return self._kernel
+
+    @property
+    def gp_dict(self):
+        if self._gp_dict is not None:
+            return self._gp_dict
+        else:
+            self._gp_dict = self._get_gp_dict()
 
     def _get_gp_dict(self):
         """
@@ -182,7 +199,8 @@ class GPModel(Model):
                     f"Kernel {self.kernel_name} requires parameter "
                     f"{pname} or log{pname}"
                 )
-        self.gpdict = gpdict
+
+        return gpdict
 
 
 class RVModel(Model):
