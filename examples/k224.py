@@ -74,7 +74,8 @@ print("Semi-amplitude estimate:", k, "m/s")
 #
 # Because _orbits_ was first designed only to be a CLI tool that uses a YAML
 # config file, parameters can currently only be passed at initialization
-# inside a dictionary. An example dictionary is given below.
+# inside a dictionary. An example dictionary is given below (a YAML version of
+# this dictionary is available in `k224.yml`.
 # **In the near future it should be possible to simply create the model
 # and then define parameters in the usual PyMC3 way.** But for now we use a
 # dictionary like the one below and we pass it to the RV model.

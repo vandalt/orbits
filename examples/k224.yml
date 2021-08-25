@@ -1,0 +1,42 @@
+# This entry is the first planet with its orbital parameters.
+b:
+  logper:
+    dist: Normal
+    kwargs: {mu: 3.039036, sd: 1.436430e-5}
+  tc:
+    dist: Normal
+    kwargs: {mu: 2072.7948, sd: 0.0007}
+  logk:
+    dist: Normal
+    kwargs: {mu: 1.619525, sd: 2.0, testval: 1.619525}
+  secsw:
+    dist: UnitDisk
+    kwargs: {shape: 2, testval: [0.01, 0.01]}
+# This entry is the second planet with its orbital parameters.
+c:
+  logper:
+    dist: Normal
+    kwargs: {mu: 3.746282, sd: 1.416320e-5}
+  tc:
+    dist: Normal
+    kwargs: {mu: 2082.6251, sd: 0.0004}
+  logk:
+    dist: Normal
+    kwargs: {mu: 1.706535, sd: 2.0, testval: 1.706535}
+  secsw:
+    dist: UnitDisk
+    kwargs: {shape: 2, testval: [0.01, 0.01]}
+# Some parameters affect the whole system, not just one planet.
+system:
+  logwn:
+    dist: Normal
+    kwargs: {mu: 0.548930, sd: 5.0}
+  gamma:
+    dist: Normal
+    kwargs: {mu: 0.0, sd: 1.0}
+  dvdt:
+    dist: Normal
+    kwargs: {mu: 0.0, sd: 0.1}
+  curv:
+    dist: Normal
+    kwargs: {mu: 0.0, sd: 0.01}
