@@ -159,7 +159,7 @@ class GPModel(Model):
             load_params(params)
             self._gp_dict = self._get_gp_dict()
             # KERNELS is just a dict mapping name to object constructors
-            self._kernel = KERNELS[self.kernel_name](**self.gpdict)
+            self._kernel = KERNELS[self.kernel_name](**self.gp_dict)
 
     @property
     def kernel(self):
@@ -167,7 +167,7 @@ class GPModel(Model):
         if self._kernel is not None:
             return self._kernel
         else:
-            self._kernel = KERNELS[self.kernel_name](**self.gpdict)
+            self._kernel = KERNELS[self.kernel_name](**self.gp_dict)
             return self._kernel
 
     @property
@@ -184,14 +184,14 @@ class GPModel(Model):
         parameters for a given kernel are there.
         """
 
-        gpdict = dict()
-        nvars = self.gpmodel.named_vars
+        gp_dict = dict()
+        nvars = self.named_vars
         prefix = f"{self.name}_" if self.name != "" else ""
         for pname in KERNEL_PARAMS[self.kernel_name]:
             if f"{prefix}{pname}" in nvars:
-                gpdict[pname] = nvars[f"{prefix}{pname}"]
+                gp_dict[pname] = nvars[f"{prefix}{pname}"]
             elif f"{prefix}log{pname}" in nvars:
-                gpdict[pname] = self.pm.Deterministic(
+                gp_dict[pname] = pm.Deterministic(
                     pname, tt.exp(nvars[f"{prefix}log{pname}"])
                 )
             else:
@@ -200,7 +200,7 @@ class GPModel(Model):
                     f"{pname} or log{pname}"
                 )
 
-        return gpdict
+        return gp_dict
 
 
 class RVModel(Model):
@@ -236,7 +236,7 @@ class RVModel(Model):
         :type num_planets: int
         :param t_ref: Reference time for RV trend parameters, defaults to None
         :type t_ref: Optional[float], optional
-        :param gp_kernel: [TODO:description], defaults to None
+        :param gp_kernel: Name of the GP kernel, defaults to None
         :type gp_kernel: Optional[str], optional
         :param quiet_celerite: [TODO:description], defaults to False
         :type quiet_celerite: bool, optional
@@ -286,26 +286,28 @@ class RVModel(Model):
                 params[prefix], name=prefix, model=self
             )
 
-        # exoplanet orbit objects require a certain parmeterization.
-        # We built vectors over planets in this "synth" parameterization
-        # (used to synthesize RVs, following RadVel nomenclature).
-        self._get_synth_params()
-
         # We also make sure that parameters specific to the RV model are
         # available (e.g. reparamtrezie log{param})
         self._get_rv_params()
 
-        # NOTE: will move to more generic model to support other timeseries.
-        # We access keys explicitely because the naming convention is different
-        # between RadVel and exoplanet
-        # To use **, would need to "translate" radvel names to exoplanet or
-        # just use exoplanet names by default.
-        self.orbit = xo.orbits.KeplerianOrbit(
-            period=self.synth_dict["per"],
-            t_periastron=self.synth_dict["tp"],
-            ecc=self.synth_dict["e"],
-            omega=self.synth_dict["w"],
-        )
+        if len(self.planets) > 0:
+            # NOTE: will move to more generic model to support all timeseries.
+            # We access keys explicitely because the naming convention is
+            # different between RadVel and exoplanet.
+            # To use **, would need to "translate" radvel names to exoplanet or
+            # just use exoplanet names by default.
+
+            # exoplanet orbit objects require a certain parmeterization.
+            # We built vectors over planets in this "synth" parameterization
+            # (used to synthesize RVs, following RadVel nomenclature).
+            self._get_synth_params()
+
+            self.orbit = xo.orbits.KeplerianOrbit(
+                period=self.synth_dict["per"],
+                t_periastron=self.synth_dict["tp"],
+                ecc=self.synth_dict["e"],
+                omega=self.synth_dict["w"],
+            )
 
         # Once we have our parameters, we define the RV model at data points
         self.get_rv_model(self.t)
@@ -394,10 +396,7 @@ class RVModel(Model):
         :rtype: pm.Distribution
         """
 
-        # Calculate RV signal for each planet's orbit (2D array)
-        rvorb = self.orbit.get_radial_velocity(t, K=self.synth_dict["k"])
         suffix = "" if name == "" else f"_{name}"
-        pm.Deterministic("rv_orbits" + suffix, rvorb)
 
         # Define the background RV model (constant at 0 if not provided)
         t_shift = t - self.t_ref
@@ -406,7 +405,16 @@ class RVModel(Model):
         bkg += self.curv * t_shift ** 2
         bkg = pm.Deterministic("bkg" + suffix, bkg)
 
-        # Sum over planets and add the background to get the full model
-        return pm.Deterministic(
-            "rv_model" + suffix, tt.sum(rvorb, axis=-1) + bkg
-        )
+        if len(self.planets) > 0:
+            # Calculate RV signal for each planet's orbit (2D array)
+            rvorb = self.orbit.get_radial_velocity(t, K=self.synth_dict["k"])
+            pm.Deterministic("rv_orbits" + suffix, rvorb)
+
+            # Sum over planets and add the background to get the full model
+            return pm.Deterministic(
+                "rv_model" + suffix, tt.sum(rvorb, axis=-1) + bkg
+            )
+        else:
+            return pm.Deterministic(
+                "rv_mode" + suffix, bkg
+            )
