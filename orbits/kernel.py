@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Union
 
 import aesara_theano_fallback.tensor as tt
@@ -7,6 +8,7 @@ from pymc3.gp.cov import Covariance
 
 
 def get_qp_kernel(
+    input_dim: int,
     period: Union[tt.TensorVariable, float],
     ls_per: Union[tt.TensorVariable, float],
     ls_exp: Union[tt.TensorVariable, float],
@@ -28,32 +30,6 @@ def get_qp_kernel(
     per_kernel = pm.gp.cov.Periodic(1, period, ls=ls_per)
 
     return sqexp_kernel * per_kernel
-
-
-CELERITE_KERNELS = {
-    "SHOTerm": terms.SHOTerm,
-    "Matern32Term": terms.Matern32Term,
-    "RotationTerm": terms.RotationTerm,
-}
-PYMC3_KERNELS = {
-    "ExpQuad": pm.gp.cov.ExpQuad,
-    "Matern32": pm.gp.cov.Matern32,
-    "Matern52": pm.gp.cov.Matern52,
-    "Periodic": pm.gp.cov.Periodic,
-    "QuasiPeriodic": get_qp_kernel,
-}
-KERNELS = {**CELERITE_KERNELS, **PYMC3_KERNELS}
-KERNEL_LIST = list(KERNELS.keys())
-KERNEL_PARAMS = {
-    "SHOTerm": ["sigma", "rho", "Q"],
-    "Matern32Term": ["sigma", "rho"],
-    "RotationTerm": ["sigma", "period", "Q0", "dQ", "f"],
-    "ExpQuad": ["sigma", "ls"],
-    "Matern32": ["sigma", "ls"],
-    "Matern52": ["sigma", "ls"],
-    "Periodic": ["sigma", "period", "ls"],
-    "QuasiPeriodic": ["sigma", "period", "ls_per", "ls_exp"],
-}
 
 
 def get_pm3_kernel(
@@ -78,4 +54,31 @@ def get_pm3_kernel(
     """
 
     # Always use 1 as input dimention because we deal with timeseries
-    return sigma ** 2 * PYMC3_KERNELS[kernel_name](1, **kwargs)
+    return sigma ** 2 * PYMC3_COVS[kernel_name](1, **kwargs)
+
+
+CELERITE_KERNELS = {
+    "SHOTerm": terms.SHOTerm,
+    "Matern32Term": terms.Matern32Term,
+    "RotationTerm": terms.RotationTerm,
+}
+PYMC3_COVS = {
+    "ExpQuad": pm.gp.cov.ExpQuad,
+    "Matern32": pm.gp.cov.Matern32,
+    "Matern52": pm.gp.cov.Matern52,
+    "Periodic": pm.gp.cov.Periodic,
+    "QuasiPeriodic": get_qp_kernel,
+}
+PYMC3_KERNELS = {kname: partial(get_pm3_kernel, kname) for kname in PYMC3_COVS}
+KERNELS = {**CELERITE_KERNELS, **PYMC3_KERNELS}
+KERNEL_LIST = list(KERNELS.keys())
+KERNEL_PARAMS = {
+    "SHOTerm": ["sigma", "rho", "Q"],
+    "Matern32Term": ["sigma", "rho"],
+    "RotationTerm": ["sigma", "period", "Q0", "dQ", "f"],
+    "ExpQuad": ["sigma", "ls"],
+    "Matern32": ["sigma", "ls"],
+    "Matern52": ["sigma", "ls"],
+    "Periodic": ["sigma", "period", "ls"],
+    "QuasiPeriodic": ["sigma", "period", "ls_per", "ls_exp"],
+}
