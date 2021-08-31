@@ -69,7 +69,7 @@ class GPModel(Model):
                             of the class in celerite2 or PyMC3.
         :type kernel_name: str
         :param params: Dictionary with GP parameter info, defaults to None
-        :type params: Optional[dict[str, dict]]
+        :type params: Optional[dict[str, dict]], optional
         :param name: PyMC3 model name that will prefix all variables,
                      defaults to ""
         :type name: str, optional
@@ -85,6 +85,10 @@ class GPModel(Model):
             self._gp_dict = self._get_gp_dict()
             # KERNELS is just a dict mapping name to object constructors
             self._kernel = KERNELS[self.kernel_name](**self.gp_dict)
+        else:
+            # NOTE: Not useful for kernel (required), keeping this way in case
+            self._kernel = None
+            self._gp_dict = None
 
     @property
     def kernel(self):
