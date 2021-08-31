@@ -301,6 +301,12 @@ class RVModel(Model):
                     "context. Then run model.add_likelihood().\n"
                 )
                 warnings.warn(msg, RuntimeWarning)
+        else:
+            msg = (
+                "No parameters. "
+                " Don't forget to add them and call add_likelihood"
+            )
+            warnings.warn(msg, RuntimeWarning,)
 
     @property
     def rv_params(self):
