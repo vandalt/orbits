@@ -7,12 +7,10 @@ import pymc3 as pm
 from celerite2.theano import GaussianProcess
 from pymc3 import Model
 
-import orbits.utils as ut
 from orbits.kernel import (CELERITE_KERNELS, KERNEL_LIST, KERNEL_PARAMS,
                            KERNELS, PYMC3_KERNELS)
+from orbits.params import SYNTH_PARAMS, get_synth_params
 from orbits.prior import load_params
-
-SYNTH_PARAMS = ["per", "tp", "e", "w", "k"]
 
 
 class PlanetModel(Model):
@@ -52,80 +50,7 @@ class PlanetModel(Model):
         These parameters will be used for orbit calculations.
         """
 
-        nvars = self.named_vars
-        prefix = f"{self.name}_" if self.name != "" else ""
-
-        # Period-related parameters
-        # exoplanet's KeplerianOrbit requires period or semi-major axis
-        PER_PARAMS = [f"{prefix}per", f"{prefix}logper"]
-        if f"{prefix}per" in nvars:
-            pass
-        elif f"{prefix}logper" in nvars:
-            # NOTE: No prefix when declaring bc model name takes care of it
-            # but required to access with nvars
-            pm.Deterministic("per", tt.exp(nvars[f"{prefix}logper"]))
-        else:
-            raise KeyError(f"Should have one of: {PER_PARAMS}")
-
-        # Ecc/omega parameters come in pair
-        EW_PARAMS = [
-            (f"{prefix}e", f"{prefix}w"),
-            (f"{prefix}secosw", f"{prefix}sesinw"),
-            (f"{prefix}ecosw", f"{prefix}esinw"),
-            f"{prefix}secsw",
-        ]
-        if f"{prefix}e" in nvars and f"{prefix}w" in nvars:
-            pass
-        elif "secosw" in nvars and "sesinw" in nvars:
-            pm.Deterministic(
-                "e",
-                nvars[f"{prefix}secosw"] ** 2 + nvars[f"{prefix}sesinw"] ** 2,
-            )
-            pm.Deterministic(
-                "w",
-                tt.arctan2(nvars[f"{prefix}sesinw"], nvars[f"{prefix}secosw"]),
-            )
-        elif "ecosw" in nvars and "esinw" in nvars:
-            pm.Deterministic(
-                "e",
-                tt.sqrt(
-                    nvars[f"{prefix}ecosw"] ** 2 + nvars[f"{prefix}esinw"] ** 2
-                ),
-            )
-            pm.Deterministic(
-                "w",
-                tt.arctan2(nvars[f"{prefix}sesinw"], nvars[f"{prefix}secosw"]),
-            )
-        elif "secsw":
-            secsw = nvars[f"{prefix}secsw"]
-            pm.Deterministic("e", tt.sum(secsw ** 2))
-            pm.Deterministic("w", tt.arctan2(secsw[1], secsw[0]))
-        else:
-            raise KeyError(f"Should have one of: {EW_PARAMS}")
-
-        TIME_PARAMS = [f"{prefix}tc", f"{prefix}tp"]
-        if f"{prefix}tp" in nvars:
-            pass
-        elif f"{prefix}tc" in nvars:
-            per = self.per
-            ecc = self.e
-            omega = self.w
-            pm.Deterministic(
-                "tp",
-                ut.timetrans_to_timeperi(
-                    nvars[f"{prefix}tc"], per, ecc, omega
-                ),
-            )
-        else:
-            raise KeyError(f"Should have one of: {TIME_PARAMS}")
-
-        K_PARAMS = [f"{prefix}k", f"{prefix}logk"]
-        if f"{prefix}k" in nvars:
-            pass
-        elif f"{prefix}logk" in nvars:
-            pm.Deterministic("k", tt.exp(nvars[f"{prefix}logk"]))
-        else:
-            raise KeyError(f"Should have one of: {K_PARAMS}")
+        get_synth_params(self.named_vars, prefix=self.name)
 
 
 class GPModel(Model):
