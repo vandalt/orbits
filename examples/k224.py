@@ -8,8 +8,8 @@
 # from [RadVel](https://radvel.readthedocs.io/en/latest/index.html).
 # A lot of the nomenclature and some design ideas in _orbits_ are borrowed from RadVel.
 
-import matplotlib.pyplot as plt
 # %%
+import matplotlib.pyplot as plt
 import numpy as np
 import orbits.utils as ut
 import pandas as pd
@@ -76,9 +76,6 @@ print("Semi-amplitude estimate:", k, "m/s")
 # config file, parameters can currently only be passed at initialization
 # inside a dictionary. An example dictionary is given below (a YAML version of
 # this dictionary is available in `k224.yml`.
-# **In the near future it should be possible to simply create the model
-# and then define parameters in the usual PyMC3 way.** But for now we use a
-# dictionary like the one below and we pass it to the RV model.
 
 # %%
 import pymc3_ext as pmx
@@ -133,8 +130,8 @@ params = {
             "kwargs": {"shape": 2, "testval": 0.01 * np.ones(2)},
         },
     },
-    # Some parameters affect the whole system, not just one planet.
-    "system": {
+    # Some parameters affect the whole rv dataset, not just one planet.
+    "rv": {
         "logwn": {
             "dist": "DataNormal",
             "kwargs": {"data_used": "svrad", "sd": 5.0, "apply": "log"},
@@ -160,7 +157,7 @@ params = {
 # with an additional eccentricity prior and an RV predicitive curve.
 
 # %%
-with RVModel(t, vrad, svrad, params, 2) as model:
+with RVModel(t, vrad, svrad, 2, params=params) as model:
 
     xo.eccentricity.vaneylen19(
         "ecc_prior",
@@ -170,9 +167,65 @@ with RVModel(t, vrad, svrad, params, 2) as model:
         observed=model.synth_dict["e"],
     )
 
-    rv_model_pred = model.get_rv_model(t_pred, name="pred")
+    rv_model_pred = model.calc_rv_model(t_pred, name="pred")
 
     print(model.named_vars)
+
+
+# %% [markdown]
+# However, forcing users to define a big nested dictionary in a notebook or
+# script is not great for readability. It also breaks the original PyMC3
+# workflow of defining parameters inside the model context. For this reason,
+# `orbits` models also support defining parameters in the model conetxt, **with
+# a few (IMPORTANT) limitation**:
+# 1. Submodels (e.g. planets) are defined at initialization with no parameters.
+#    To define their parameters, you need to use their context (see below).
+# 2. The chi2 or GP likelihood for the data is never called explicitely,
+#    it is only included in the total posterior if defined. I have not found a
+#    good way to ensure it is created before sampling or optimization, so for
+#    now, users must call `add_likelihood` after creating the model manually
+#    (this is not required when passing a full parameter dictionary: the model
+#    is then able to create it by itself at initialization).
+#    There is a warning when this no likelihood is added
+
+# %%
+import pymc3 as pm
+import pymc3_ext as pmx
+from orbits.prior import data_normal_prior
+
+with RVModel(t, vrad, svrad, 2) as model:
+
+    print(model.named_vars)
+
+    data_normal_prior("logwn", data_used="svrad", sd=5.0, apply="log")
+    pm.Normal("gamma", mu=0.0, sd=1.0)
+    pm.Normal("dvdt", mu=0.0, sd=0.1)
+    pm.Normal("curv", mu=0.0, sd=0.01)
+
+    # To add planet parameters, must be in their automatically created submodel
+    with model.planets["b"]:
+        pm.Normal("logper", mu=np.log(20.8851), sd=0.0003 / 20.8851)
+        pm.Normal("tc", mu=2072.7948, sd=0.0007)
+        pm.Normal("logk", mu=np.log(k[0]), sd=2.0, testval=np.log(k[0]))
+        pmx.UnitDisk("secsw", shape=2, testval=0.01 * np.ones(2))
+    with model.planets["c"]:
+        pm.Normal("logper", mu=np.log(42.3633), sd=0.0006 / 42.3633)
+        pm.Normal("tc", mu=2082.6251, sd=0.0004)
+        pm.Normal("logk", mu=np.log(k[1]), sd=2.0, testval=np.log(k[1]))
+        pmx.UnitDisk("secsw", shape=2, testval=0.01 * np.ones(2))
+
+    xo.eccentricity.vaneylen19(
+        "ecc_prior",
+        multi=True,
+        shape=2,
+        fixed=True,
+        observed=model.synth_dict["e"],
+    )
+
+    rv_model_pred = model.calc_rv_model(t_pred, name="pred")
+
+
+    model.add_likelihood()
 
 # %% [markdown]
 # Now that we have a model, we can plot its prediction. But we only defined
