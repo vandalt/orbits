@@ -16,7 +16,7 @@ from orbits.prior import load_params
 class PlanetModel(Model):
     def __init__(
         self,
-        params: dict[str, dict],
+        params: Optional[dict[str, dict]] = None,
         name: str = "",
         model: Optional[Model] = None,
     ):
@@ -30,7 +30,8 @@ class PlanetModel(Model):
         :param params: Planet orbit parameters. These parameters are used to
                        define the orbit of the planet. Under the hood, the
                        model ensures that [per, tp, e, w, k] are available.
-        :type params: dict[str, dict]
+                       Defaults to None
+        :type params: Optional[dict[str, dict]], optional
         :param name: PyMC3 model name that will prefix all variables,
                      defaults to ""
         :type name: str, optional
@@ -39,10 +40,19 @@ class PlanetModel(Model):
         """
         super().__init__(name=name, model=model)
 
-        # Load planet parameters and convert to synth params under the hood
-        # (required for orbit modelling)
-        load_params(params)
-        self._get_synth_params()
+        if params is not None:
+            load_params(params)
+            self._synth_params = self._get_synth_params()
+        else:
+            self._synth_params = None
+
+    @property
+    def synth_params(self):
+        if self._synth_params is not None:
+            return self._synth_params
+        else:
+            self._synth_params = self._get_synth_params()
+            return self._synth_params
 
     def _get_synth_params(self):
         """
@@ -50,7 +60,7 @@ class PlanetModel(Model):
         These parameters will be used for orbit calculations.
         """
 
-        get_synth_params(self.named_vars, prefix=self.name)
+        return get_synth_params(self.named_vars, prefix=self.name)
 
 
 class GPModel(Model):
