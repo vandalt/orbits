@@ -287,16 +287,10 @@ with model:
 # Let's now plot the MAP solution.
 
 # %%
-plt.errorbar(t, vrad, yerr=svrad, fmt=".k")
-plt.plot(t_pred, map_soln["rv_orbits_pred"], "--k", alpha=0.5)
-plt.plot(t_pred, map_soln["bkg_pred"], ":k", alpha=0.5)
-plt.plot(t_pred, map_soln["rv_model_pred"], label="model")
+from orbits import plots
 
-plt.legend(fontsize=10)
-plt.xlim(t_pred.min(), t_pred.max())
-plt.xlabel("time [days]")
-plt.ylabel("radial velocity [m/s]")
-plt.title("MAP model")
+
+plots.rvplot(t, vrad, svrad, t_soln=t_pred, soln=map_soln, soln_name="pred")
 plt.show()
 
 # %% [markdown]
@@ -350,30 +344,12 @@ az.summary(
 # %%
 import corner
 
-with model:
-    corner.corner(trace, var_names=["per", "k", "e", "w"])
-    plt.show()
+# with model:
+corner.corner(trace, var_names=["per", "k", "e", "w"])
+plt.show()
 
 # %% [markdown]
 # Finally, we plot the full model and the phase-folded planet orbits
-
-# %%
-plt.errorbar(t, vrad, yerr=svrad, fmt=".k")
-
-# Compute the posterior predictions for the RV model
-rv_pred = trace.posterior["rv_model_pred"].values
-pred = np.percentile(rv_pred, [16, 50, 84], axis=(0, 1))
-plt.plot(t_pred, pred[1], color="C0", label="model")
-art = plt.fill_between(t_pred, pred[0], pred[2], color="C0", alpha=0.3)
-art.set_edgecolor("none")
-
-plt.legend(fontsize=10)
-plt.xlim(t_pred.min(), t_pred.max())
-plt.xlabel("time [days]")
-plt.ylabel("radial velocity [m/s]")
-plt.title("posterior constraints")
-plt.show()
-
 
 # %%
 for n, letter in enumerate("bc"):
