@@ -26,8 +26,8 @@ def get_qp_kernel(
     :rtype: Covariance
     """
 
-    sqexp_kernel = pm.gp.cov.ExpQuad(1, ls=ls_exp)
-    per_kernel = pm.gp.cov.Periodic(1, period, ls=ls_per)
+    sqexp_kernel = pm.gp.cov.ExpQuad(input_dim, ls=ls_exp)
+    per_kernel = pm.gp.cov.Periodic(input_dim, period, ls=ls_per)
 
     return sqexp_kernel * per_kernel
 
