@@ -125,13 +125,12 @@ class GPModel(Model):
 
         gp_dict = dict()
         nvars = self.named_vars
-        prefix = f"{self.name}_" if self.name != "" else ""
         for pname in KERNEL_PARAMS[self.kernel_name]:
-            if f"{prefix}{pname}" in nvars:
-                gp_dict[pname] = nvars[f"{prefix}{pname}"]
-            elif f"{prefix}log{pname}" in nvars:
+            if f"{self.prefix}{pname}" in nvars:
+                gp_dict[pname] = nvars[f"{self.prefix}{pname}"]
+            elif f"{self.prefix}log{pname}" in nvars:
                 gp_dict[pname] = pm.Deterministic(
-                    pname, tt.exp(nvars[f"{prefix}log{pname}"])
+                    pname, tt.exp(nvars[f"{self.prefix}log{pname}"])
                 )
             else:
                 raise ValueError(
