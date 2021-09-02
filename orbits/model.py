@@ -306,7 +306,10 @@ class RVModel(Model):
                 "No parameters. "
                 " Don't forget to add them and call add_likelihood"
             )
-            warnings.warn(msg, RuntimeWarning,)
+            warnings.warn(
+                msg,
+                RuntimeWarning,
+            )
 
     @property
     def rv_params(self):
@@ -406,32 +409,35 @@ class RVModel(Model):
         """
         nvars = self.named_vars
         rv_params = dict()
+        prefix = self.prefix
 
-        if "gamma" not in nvars:
+        if f"{prefix}gamma" not in nvars:
             rv_params["gamma"] = pm.Deterministic(
                 "gamma", tt.as_tensor_variable(0.0)
             )
         else:
-            rv_params["gamma"] = nvars["gamma"]
+            rv_params["gamma"] = nvars[f"{prefix}gamma"]
 
-        if "dvdt" not in nvars:
+        if f"{prefix}dvdt" not in nvars:
             rv_params["dvdt"] = pm.Deterministic(
                 "dvdt", tt.as_tensor_variable(0.0)
             )
         else:
-            rv_params["dvdt"] = nvars["dvdt"]
+            rv_params["dvdt"] = nvars[f"{prefix}dvdt"]
 
-        if "curv" not in nvars:
+        if f"{prefix}curv" not in nvars:
             rv_params["curv"] = pm.Deterministic(
                 "curv", tt.as_tensor_variable(0.0)
             )
         else:
-            rv_params["curv"] = nvars["curv"]
+            rv_params["curv"] = nvars[f"{prefix}curv"]
 
-        if "wn" in nvars:
-            rv_params["wn"] = nvars["wn"]
-        elif "logwn" in nvars:
-            rv_params["wn"] = pm.Deterministic("wn", tt.exp(nvars["logwn"]))
+        if f"{prefix}wn" in nvars:
+            rv_params["wn"] = nvars[f"{prefix}wn"]
+        elif f"{prefix}logwn" in nvars:
+            rv_params["wn"] = pm.Deterministic(
+                "wn", tt.exp(nvars[f"{prefix}logwn"])
+            )
         else:
             rv_params["wn"] = pm.Deterministic(
                 "wn", tt.as_tensor_variable(0.0)
