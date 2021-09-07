@@ -291,15 +291,18 @@ class RVModel(Model):
             self.gp = None
 
         if params is not None:
-            try:
-                self.add_likelihood()
-            except (KeyError, AttributeError):
-                msg = (
-                    "IMPORTANT: Tried to define 'obs' likelihood, "
-                    "but some parameters are missing. Either add parameters "
-                    "to the input dictionary or define them in the model "
-                    "context. Then run model.add_likelihood().\n"
-                )
+            # HACK: might not want this when use in global orbit model,
+            # useful if wrapped by other model that handles likelihood
+            if self.isroot:
+                try:
+                    self.add_likelihood()
+                except (KeyError, AttributeError):
+                    msg = (
+                        "IMPORTANT: Tried to define 'obs' likelihood, "
+                        "but some parameters are missing. Either add params "
+                        "to the input dictionary or define them in the model "
+                        "context. Then run model.add_likelihood().\n"
+                    )
                 warnings.warn(msg, RuntimeWarning)
         else:
             msg = (
