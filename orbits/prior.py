@@ -1,13 +1,15 @@
-from typing import Optional
+from typing import Optional, Union
 
 import aesara_theano_fallback.tensor as tt
 import numpy as np
 import pymc3 as pm
 import pymc3_ext as pmx
 from pymc3.distributions.distribution import Distribution
+from pymc3.model import DeterministicWrapper
+from theano.tensor.var import TensorConstant, TensorVariable
+from exoplanet.interp import regular_grid_interp
 
-
-def fixed_pymc3_param(name: str, value: float) -> Distribution:
+def fixed_pymc3_param(name: str, value: float) -> DeterministicWrapper:
     """
     Helper function to create a fixed PyMC3 parameter.
 
@@ -99,12 +101,93 @@ def data_normal_prior(
     return pm.Normal(name, center, std_dev)
 
 
+def wmed(
+    values: Union[np.ndarray, TensorVariable, TensorConstant],
+    weights: Union[np.ndarray, TensorVariable, TensorConstant],
+    use_np: bool = True,
+) -> Union[float, TensorVariable, TensorConstant]:
+    """
+    Calculate a weighted median with numpy or theano.
+
+    :param values: Sample values to get the median.
+    :type values: Union[np.ndarray, TensorVariable, TensorConstant]
+    :param weights: Weights associated to each value.
+    :type weights: Union[np.ndarray, TensorVariable, TensorConstant]
+    :return: Weighted median of the sample values.
+    :rtype: Union[float, TensorVariable, TensorConstant]
+    """
+    if use_np:
+        values = np.array(values)
+        weights = np.array(weights)
+        if not np.all(np.diff(values) >= 0):
+            inds = np.argsort(values)
+            values = values[inds]
+            weights = weights[inds]
+        norm_weights = weights / weights.sum()
+        wquants = np.cumsum(norm_weights) - 0.5 * norm_weights
+        res = np.interp(0.5, wquants, values)
+    else:
+        values = tt.as_tensor_variable(values)
+        weights = tt.as_tensor_variable(weights)
+        if not tt.all(tt.ge(tt.extra_ops.diff(values), 0)):
+            inds = tt.argsort(values)
+            values = values[inds]
+            weights = weights[inds]
+        norm_weights = weights / weights.sum()
+        wquants = tt.extra_ops.cumsum(norm_weights) - 0.5 * norm_weights
+        # exoplanet interp function requires specific shapes
+        # 0-d (scalar) does not matter much but let's be consistent
+        res = regular_grid_interp([wquants], values, np.array([[0.5]]).T)[0]
+
+    return res
+
+
+def data_fixed_prior(
+    name: str,
+    data_used: str,
+    central_measure: str = "mean",
+    error_used: Optional[str] = None,
+) -> DeterministicWrapper:
+    # TODO: Merge this and data_normal_prior with class or helper functions
+
+    try:
+        # Get values from PyMC3 Data
+        values = pm.Model.get_context()[data_used].get_value()
+        if error_used is not None:
+            err = pm.Model.get_context()[error_used].get_value()
+    except KeyError:
+        # If not pymc3 data, try attribute array
+        values = getattr(pm.Model.get_context(), data_used)
+        if error_used is not None:
+            err = getattr(pm.Model.get_context(), error_used)
+    except AttributeError:
+        raise ValueError(
+            "data_used must point to a PyMC3 dataset or array in the model."
+        )
+
+    if central_measure == "mean":
+        if error_used is not None:
+            center = np.average(values, weights=err ** -2)
+        else:
+            center = np.mean(values)
+    elif central_measure == "median":
+        if error_used is not None:
+            center = wmed(values, weights=err ** -2)
+        else:
+            center = np.median(values)
+    else:
+        raise ValueError("central_measure must be mean or median")
+
+    return fixed_pymc3_param(name, center)
+
+
 PYMC3_PRIORS = {
     "Uniform": pm.Uniform,
     "Normal": pm.Normal,
     "TruncatedNormal": pm.TruncatedNormal,
     "Fixed": fixed_pymc3_param,
     "DataNormal": data_normal_prior,
+    "DataFixed": data_fixed_prior,
     "UnitDisk": pmx.UnitDisk,
 }
 
