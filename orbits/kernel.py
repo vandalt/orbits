@@ -32,6 +32,14 @@ def get_qp_kernel(
     return sqexp_kernel * per_kernel
 
 
+def get_sum_matern(sigma1, sigma2, rho1, rho2):
+
+    ker1 = terms.Matern32Term(sigma=sigma1, rho=rho1)
+    ker2 = terms.Matern32Term(sigma=sigma2, rho=rho2)
+
+    return ker1 + ker2
+
+
 def get_pm3_kernel(
     kernel_name: str, sigma: Union[tt.TensorVariable, float], **kwargs
 ) -> Covariance:
@@ -60,6 +68,7 @@ def get_pm3_kernel(
 CELERITE_KERNELS = {
     "SHOTerm": terms.SHOTerm,
     "Matern32Term": terms.Matern32Term,
+    "SumMatern32Term": get_sum_matern,
     "RotationTerm": terms.RotationTerm,
 }
 PYMC3_COVS = {
@@ -75,6 +84,7 @@ KERNEL_LIST = list(KERNELS.keys())
 KERNEL_PARAMS = {
     "SHOTerm": ["sigma", "rho", "Q"],
     "Matern32Term": ["sigma", "rho"],
+    "SumMatern32Term": ["sigma1", "sigma2", "rho1", "rho2"],
     "RotationTerm": ["sigma", "period", "Q0", "dQ", "f"],
     "ExpQuad": ["sigma", "ls"],
     "Matern32": ["sigma", "ls"],
