@@ -24,7 +24,7 @@ def timetrans_to_timeperi(
      :type per: Union[tt.TensorVariable, np.ndarray, float]
      :param ecc: Eccentricity
      :type ecc: Union[tt.TensorVariable, np.ndarray, float]
-     :param omega: Argument of periastron (of the star's orbit)
+     :param omega: Argument of periastron in radians (of the star's orbit)
      :type omega: Union[tt.TensorVariable, np.ndarray, float]
      :param use_np: Use numpy if True (theano otherwise), defaults to False
      :type use_np: bool, optional
@@ -32,6 +32,7 @@ def timetrans_to_timeperi(
      :rtype: Union[tt.TensorVariable, np.ndarray, float]
     """
 
+    # TODO: add type checking
     if use_np:
         f = np.pi / 2 - omega
         ee = 2 * np.arctan(np.tan(f / 2) * np.sqrt((1 - ecc) / (1 + ecc)))
