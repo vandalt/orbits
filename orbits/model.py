@@ -187,7 +187,8 @@ class RVModel(Model):
                              By default, the model uses lowercase letters
                              starting with b.
         :type planet_names: Optional[Union[str, list[str]]] , optional
-        :param quiet_celerite: [TODO:description], defaults to False
+        :param quiet_celerite: Silence celerite linear algebra errors,
+                               defaults to False
         :type quiet_celerite: bool, optional
         :param name: PyMC3 model name that will prefix all variables,
                      defaults to ""
