@@ -23,6 +23,7 @@ _orbits_ can be installed with pip: `python -m pip install orbits`.
 To use the development version of _orbits_, clone the repository and install it:
 ```shell
 git clone https://github.com/vandalt/orbits.git
+cd orbits
 python -m pip install -U -e ".[dev]"
 ```
 
