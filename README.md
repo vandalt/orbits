@@ -18,7 +18,8 @@ defining GP kernels, and using the RVModel object for inference.
 
 ## Installation
 
-_orbits_ can be installed with pip: `python -m pip install orbits`.
+_orbits_ can be installed with pip: `python -m pip install orbits`. It is
+probably a good idea to install this in a new virtual environment.
 
 To use the development version of _orbits_, clone the repository and install it:
 ```shell
